@@ -1,23 +1,34 @@
 # ===== Makefile =====
-CC      := gcc
-CFLAGS  := -O3 -std=c11 -Wall -Wextra -Wpedantic
-INCLUDE := -Iinclude
+CC       := gcc
+CFLAGS   := -O3 -std=c11 -Wall -Wextra -Wpedantic -fopenmp
+INCLUDE  := -Iinclude
 
-SRC     := src/graph.c src/mmio.c src/main_read_test.c
-OBJDIR  := build
-OBJ     := $(addprefix $(OBJDIR)/, $(notdir $(SRC:.c=.o)))
+OBJDIR := build
+BIN    := bin
 
-BIN     := bin
-TARGET  := $(BIN)/read_mtx
+COMMON_SRC  := src/graph.c src/mmio.c src/cc.c src/cc_omp.c
+COMMON_OBJ  := $(addprefix $(OBJDIR)/, $(notdir $(COMMON_SRC:.c=.o)))
 
-# Default target
-all: $(TARGET)
+READ_MAIN   := src/main_read_test.c
+READ_OBJ    := $(OBJDIR)/$(notdir $(READ_MAIN:.c=.o))
+READ_TARGET := $(BIN)/read_mtx
 
-# Link
-$(TARGET): $(OBJ)
-	@mkdir -p $(BIN)
-	$(CC) $(CFLAGS) $(OBJ) -o $@
-	@echo "✅ Built $@"
+CC_MAIN     := src/main_cc_test.c
+CC_OBJ      := $(OBJDIR)/$(notdir $(CC_MAIN:.c=.o))
+CC_TARGET   := $(BIN)/cc_test
+
+# Default target builds both executables
+all: $(READ_TARGET) $(CC_TARGET)
+
+# Link the read_mtx tool
+$(READ_TARGET): $(COMMON_OBJ) $(READ_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@
+	@echo "Built $@"
+
+# Link the cc_test tool
+$(CC_TARGET): $(COMMON_OBJ) $(CC_OBJ) | $(BIN)
+	$(CC) $(CFLAGS) $^ -o $@
+	@echo "Built $@"
 
 # Compile our own source files
 $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
@@ -27,12 +38,12 @@ $(OBJDIR)/%.o: src/%.c | $(OBJDIR)
 $(OBJDIR)/mmio.o: src/mmio.c | $(OBJDIR)
 	$(CC) $(CFLAGS) $(INCLUDE) -w -c $< -o $@
 
-# Ensure build dir exists
-$(OBJDIR):
-	@mkdir -p $(OBJDIR)
+# Ensure output directories exist before compiling or linking
+$(OBJDIR) $(BIN):
+	@mkdir -p $@
 
 clean:
 	rm -rf $(OBJDIR) $(BIN)
-	@echo "🧹 Cleaned build artifacts."
+	@echo "Cleaned build artifacts."
 
 .PHONY: all clean

@@ -2,3 +2,5 @@ build
 *.o
 *.d
 data
+bin
+.venv
