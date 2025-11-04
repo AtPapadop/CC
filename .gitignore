@@ -4,3 +4,4 @@ build
 data
 bin
 .venv
+*.txt
