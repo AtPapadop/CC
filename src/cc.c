@@ -21,11 +21,9 @@ void compute_connected_components(const CSRGraph *G, int32_t *labels)
     }
 
     int changed = 1;
-    int iteration = 0;
     while (changed)
     {
         changed = 0;
-        ++iteration;
 
         for (int32_t u = 0; u < n; u++)
         {

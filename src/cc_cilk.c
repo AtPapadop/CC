@@ -21,11 +21,9 @@ void compute_connected_components_cilk(const CSRGraph *G, int32_t *labels)
     }
 
     int changed = 1;
-    int iteration = 0;
     while (changed)
     {
         changed = 0;
-        ++iteration;
 
         cilk_for (int32_t u = 0; u < n; u++)
         {
