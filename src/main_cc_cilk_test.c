@@ -1,10 +1,10 @@
 /* CC Test (OpenCilk)
  *
- * Loads a graph from a Matrix Market file, computes connected components using
+ * Loads a graph from a Matrix Market or MATLAB file, computes connected components using
  * label propagation (LP) with OpenCilk parallelism, and writes labels to a file.
  *
  * Usage:
- *   ./cc_test_cilk <matrix-market-file> [--threads N]
+ *   CILK_NWORKERS=N ./cc_test_cilk <matrix-file>
  */
 
 #define _GNU_SOURCE
@@ -12,7 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <getopt.h>
 #include <time.h>
 #include <stdint.h>
 #include <cilk/cilk.h>
@@ -20,7 +19,7 @@
 #include "cc.h"
 #include "graph.h"
 
-// Function to get wall-clock time in seconds
+// Wall-clock time in seconds
 static inline double wall_time(void)
 {
     struct timespec ts;
@@ -28,58 +27,24 @@ static inline double wall_time(void)
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-
 int main(int argc, char **argv)
 {
-    const char *path = NULL;
-    int num_threads = 1;
-
-    const struct option long_opts[] = {
-        {"threads", required_argument, NULL, 't'},
-        {NULL, 0, NULL, 0}
-    };
-
-    int opt;
-    int opt_index = 0;
-    while ((opt = getopt_long(argc, argv, "t:", long_opts, &opt_index)) != -1)
+    if (argc < 2)
     {
-        switch (opt)
-        {
-        case 't':
-        {
-            char *endptr = NULL;
-            long parsed = strtol(optarg, &endptr, 10);
-            if (optarg[0] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX)
-            {
-                fprintf(stderr, "Invalid thread count: %s\n", optarg);
-                return EXIT_FAILURE;
-            }
-            num_threads = (int)parsed;
-        }
-        break;
-        default:
-            fprintf(stderr, "Usage: %s [--threads N] <matrix-market-file>\n", argv[0]);
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (optind >= argc)
-    {
-        fprintf(stderr, "Missing matrix-market file path.\n");
-        fprintf(stderr, "Usage: %s [--threads N] <matrix-market-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <matrix-file>\n", argv[0]);
+        fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
         return EXIT_FAILURE;
     }
-    path = argv[optind];
 
-    // Set Cilk worker count
-    char workers_env[64];
-    snprintf(workers_env, sizeof(workers_env), "CILK_NWORKERS=%d", num_threads);
-    putenv(workers_env);
+    const char *path = argv[1];
+
+    // Report worker configuration
+    int workers = __cilkrts_get_nworkers();
+    printf("OpenCilk workers: %d\n", workers);
 
     printf("Loading graph: %s\n", path);
-
     CSRGraph G;
-    if (load_csr_from_mtx(path, 1, 1, &G) != 0)
+    if (load_csr_from_file(path, 1, 1, &G) != 0)
     {
         fprintf(stderr, "Failed to load graph from %s\n", path);
         return EXIT_FAILURE;

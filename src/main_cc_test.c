@@ -3,7 +3,7 @@
  * This program loads a graph from a Matrix Market file, computes its connected components,
  * counts the number of unique components, and writes the component labels to an output file.
  *
- * Usage: ./cc_test <matrix-market-file> --algorithm lp|bfs --threads N
+ * Usage: ./cc_test <matrix-file-path> --algorithm lp|bfs --threads N
  *  <algorithm>: 'lp' for label propagation, 'bfs' for BFS (default: lp)
  *  <threads>: number of threads to use for parallel execution using OpenMP, in case of label propagation only (default: 1)
  */
@@ -60,8 +60,8 @@ int main(int argc, char **argv)
     /* Remaining non-option argument should be the path */
     if (optind >= argc)
     {
-        fprintf(stderr, "Missing matrix-market file path.\n");
-        fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] <matrix-market-file>\n", argv[0]);
+        fprintf(stderr, "Missing matrix file path.\n");
+        fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] <matrix-file-path>\n", argv[0]);
         return EXIT_FAILURE;
     }
     path = argv[optind];
@@ -69,7 +69,7 @@ int main(int argc, char **argv)
     printf("Loading graph: %s\n", path);
 
     CSRGraph G;
-    if (load_csr_from_mtx(path, 1, 1, &G) != 0)
+    if (load_csr_from_file(path, 1, 1, &G) != 0)
     {
         fprintf(stderr, "Failed to load graph from %s\n", path);
         return EXIT_FAILURE;
