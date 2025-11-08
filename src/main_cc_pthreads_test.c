@@ -21,15 +21,17 @@
 int main(int argc, char **argv)
 {
     int num_threads = 1;
+    int runs = 1;
     const char *path = NULL;
 
     const struct option long_opts[] = {
         {"threads", required_argument, NULL, 't'},
+        {"runs", required_argument, NULL, 'r'},
         {NULL, 0, NULL, 0}
     };
 
     int opt, opt_index = 0;
-    while ((opt = getopt_long(argc, argv, "t:", long_opts, &opt_index)) != -1)
+    while ((opt = getopt_long(argc, argv, "t:r:", long_opts, &opt_index)) != -1)
     {
         switch (opt)
         {
@@ -45,8 +47,20 @@ int main(int argc, char **argv)
             num_threads = (int)parsed;
             break;
         }
+        case 'r':
+        {
+            char *endptr = NULL;
+            long parsed = strtol(optarg, &endptr, 10);
+            if (optarg[0] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX)
+            {
+                fprintf(stderr, "Invalid run count: %s\n", optarg);
+                return EXIT_FAILURE;
+            }
+            runs = (int)parsed;
+            break;
+        }
         default:
-            fprintf(stderr, "Usage: %s [--threads N] <matrix-file-path>\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--threads N] [--runs N] <matrix-file-path>\n", argv[0]);
             return EXIT_FAILURE;
         }
     }
@@ -54,7 +68,7 @@ int main(int argc, char **argv)
     if (optind >= argc)
     {
         fprintf(stderr, "Missing matrix file path.\n");
-        fprintf(stderr, "Usage: %s [--threads N] <matrix-file-path>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--threads N] [--runs N] <matrix-file-path>\n", argv[0]);
         return EXIT_FAILURE;
     }
     path = argv[optind];
@@ -76,13 +90,27 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Computing connected components with %d threads...\n", num_threads);
+    printf("Computing connected components with %d thread%s (%d run%s)...\n",
+        num_threads,
+        num_threads == 1 ? "" : "s",
+        runs,
+        runs == 1 ? "" : "s");
 
-    double start = omp_get_wtime();
-    compute_connected_components_pthreads(&G, labels, num_threads);
-    double end = omp_get_wtime();
+    double total_time = 0.0;
+    for (int run = 0; run < runs; run++)
+    {
+     double start = omp_get_wtime();
+     compute_connected_components_pthreads(&G, labels, num_threads);
+     double elapsed = omp_get_wtime() - start;
+     total_time += elapsed;
+     printf("Run %d time: %.6f seconds\n", run + 1, elapsed);
+    }
 
-    printf("Connected components computed in %.6f seconds.\n", end - start);
+    double average = total_time / runs;
+    printf("Average time over %d run%s: %.6f seconds.\n",
+        runs,
+        runs == 1 ? "" : "s",
+        average);
 
     int32_t num_components = count_unique_labels(labels, G.n);
     printf("Number of connected components: %d\n", num_components);

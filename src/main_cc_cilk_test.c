@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <cilk/cilk.h>
 #include <cilk/cilk_api.h>
+#include <getopt.h>
 #include "cc.h"
 #include "graph.h"
 
@@ -29,14 +30,47 @@ static inline double wall_time(void)
 
 int main(int argc, char **argv)
 {
-    if (argc < 2)
+    int runs = 1;
+    const char *path = NULL;
+
+    const struct option long_opts[] = {
+        {"runs", required_argument, NULL, 'r'},
+        {NULL, 0, NULL, 0}
+    };
+
+    int opt;
+    int opt_index = 0;
+    while ((opt = getopt_long(argc, argv, "r:", long_opts, &opt_index)) != -1)
     {
-        fprintf(stderr, "Usage: %s <matrix-file>\n", argv[0]);
+        switch (opt)
+        {
+        case 'r':
+        {
+            char *endptr = NULL;
+            long parsed = strtol(optarg, &endptr, 10);
+            if (optarg[0] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX)
+            {
+                fprintf(stderr, "Invalid run count: %s\n", optarg);
+                return EXIT_FAILURE;
+            }
+            runs = (int)parsed;
+            break;
+        }
+        default:
+            fprintf(stderr, "Usage: %s [--runs N] <matrix-file>\n", argv[0]);
+            fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (optind >= argc)
+    {
+        fprintf(stderr, "Usage: %s [--runs N] <matrix-file>\n", argv[0]);
         fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    const char *path = argv[1];
+    path = argv[optind];
 
     // Report worker configuration
     int workers = __cilkrts_get_nworkers();
@@ -58,15 +92,24 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Computing connected components...\n");
+    printf("Computing connected components (%d run%s)...\n", runs, runs == 1 ? "" : "s");
 
-    double start = wall_time();
-    compute_connected_components_cilk(&G, labels);
-    double end = wall_time();
+    double total_time = 0.0;
+    for (int run = 0; run < runs; run++)
+    {
+        double start = wall_time();
+        compute_connected_components_cilk(&G, labels);
+        double end = wall_time();
+        double elapsed = end - start;
+        total_time += elapsed;
+        printf("Run %d time: %.6f seconds\n", run + 1, elapsed);
+    }
+
+    double average = total_time / runs;
+    printf("Average time over %d run%s: %.6f seconds\n", runs, runs == 1 ? "" : "s", average);
 
     int32_t num_components = count_unique_labels(labels, G.n);
     printf("Number of connected components: %d\n", num_components);
-    printf("Execution time: %.3f seconds\n", end - start);
 
     FILE *fout = fopen("cilk_labels.txt", "w");
     if (!fout)

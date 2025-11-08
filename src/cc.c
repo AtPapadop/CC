@@ -15,64 +15,69 @@ void compute_connected_components(const CSRGraph *restrict G, int32_t *restrict 
   for (size_t i = 0; i < n; i++)
     labels[i] = (int32_t)i;
 
-  // Allocate aligned label buffer
-  int32_t *restrict new_labels;
-  if (posix_memalign((void **)&new_labels, 64, n * sizeof(int32_t)) != 0)
+  // Allocate aligned label buffer (double buffering)
+  int32_t *aux_labels;
+  if (posix_memalign((void **)&aux_labels, 64, n * sizeof(int32_t)) != 0)
   {
     fprintf(stderr, "Memory allocation failed\n");
     exit(EXIT_FAILURE);
   }
 
+  int32_t *label_buffers[2] = {labels, aux_labels};
+  int active_idx = 0;
+
   // Allocate frontier arrays
-  uint8_t *restrict active;
-  uint8_t *restrict next_active;
+  uint8_t *active;
+  uint8_t *next_active;
   if (posix_memalign((void **)&active, 64, n) != 0 || posix_memalign((void **)&next_active, 64, n) != 0)
   {
     fprintf(stderr, "Memory allocation failed (frontiers)\n");
-    free(new_labels);
+    free(aux_labels);
     exit(EXIT_FAILURE);
   }
 
-  memset(active, 1, n);        // initially all vertices active
-  memset(next_active, 0, n);   // next frontier empty
+  memset(active, 1, n);      // initially all vertices active
+  memset(next_active, 0, n); // next frontier empty
 
-  int changed = 1;
-  while (changed)
+  while (1)
   {
-    changed = 0;
+    int changed = 0;
+    const int read_idx = active_idx;
+    const int write_idx = read_idx ^ 1;
+    const int32_t *restrict current_labels = label_buffers[read_idx];
+    int32_t *restrict next_labels = label_buffers[write_idx];
 
     for (size_t u = 0; u < n; u++)
     {
-      if (!active[u])
-        continue; // skip inactive vertices
+      int32_t new_label = current_labels[u];
 
-      int32_t old_label = labels[u];
-      int32_t new_label = old_label;
-
-      // Find minimum label among neighbors
-      for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
+      if (active[u])
       {
-        int32_t v = col_idx[j];
-        if (labels[v] < new_label)
-          new_label = labels[v];
-      }
-
-      new_labels[u] = new_label;
-
-      // If label changed, activate this vertex and its neighbors
-      if (new_label < old_label)
-      {
-        changed = 1;
-        next_active[u] = 1;
+        // Find minimum label among neighbors
         for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
-          next_active[col_idx[j]] = 1;
+        {
+          int32_t v = col_idx[j];
+          if (current_labels[v] < new_label)
+            new_label = current_labels[v];
+        }
+
+        // If label changed, activate this vertex and its neighbors
+        if (new_label < current_labels[u])
+        {
+          changed = 1;
+          next_active[u] = 1;
+          for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
+            next_active[col_idx[j]] = 1;
+        }
       }
+
+      next_labels[u] = new_label;
     }
 
-    // Swap label and frontier arrays
-    int32_t *tmp_labels = labels;
-    labels = new_labels;
-    new_labels = tmp_labels;
+    if (!changed)
+      break;
+
+    active_idx ^= 1;
 
     uint8_t *tmp_frontier = active;
     active = next_active;
@@ -81,17 +86,19 @@ void compute_connected_components(const CSRGraph *restrict G, int32_t *restrict 
     memset(next_active, 0, n); // clear next frontier for next round
   }
 
-  free(new_labels);
+  if (active_idx != 0)
+    memcpy(labels, label_buffers[active_idx], n * sizeof(int32_t));
+
+  free(aux_labels);
   free(active);
   free(next_active);
 }
 
-
 void compute_connected_components_bfs(const CSRGraph *restrict G, int32_t *restrict labels)
 {
   int32_t n = G->n;
-  int64_t *row_ptr = G->row_ptr;
-  int32_t *col_idx = G->col_idx;
+  const int64_t *restrict row_ptr = G->row_ptr;
+  const int32_t *restrict col_idx = G->col_idx;
 
   for (int32_t i = 0; i < n; i++)
     labels[i] = -1;
@@ -128,6 +135,8 @@ void compute_connected_components_bfs(const CSRGraph *restrict G, int32_t *restr
     }
     current_label++;
   }
+
+  free(queue);
 }
 
 int32_t count_unique_labels(const int32_t *restrict labels, int32_t n)

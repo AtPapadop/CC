@@ -22,17 +22,19 @@ int main(int argc, char **argv)
     /* Defaults */
     const char *algorithm = "lp";
     int num_threads = 1;
+    int runs = 1;
     const char *path = NULL;
 
     const struct option long_opts[] = {
         {"algorithm", required_argument, NULL, 'a'},
         {"threads", required_argument, NULL, 't'},
+        {"runs", required_argument, NULL, 'r'},
         {NULL, 0, NULL, 0}
     };
 
     int opt;
     int opt_index = 0;
-    while ((opt = getopt_long(argc, argv, "a:t:", long_opts, &opt_index)) != -1)
+    while ((opt = getopt_long(argc, argv, "a:t:r:", long_opts, &opt_index)) != -1)
     {
         switch (opt)
         {
@@ -51,8 +53,20 @@ int main(int argc, char **argv)
             num_threads = (int)parsed;
         }
         break;
+        case 'r':
+        {
+            char *endptr = NULL;
+            long parsed = strtol(optarg, &endptr, 10);
+            if (optarg[0] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX)
+            {
+                fprintf(stderr, "Invalid run count: %s\n", optarg);
+                return EXIT_FAILURE;
+            }
+            runs = (int)parsed;
+        }
+        break;
         default:
-            fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] <matrix-market-file>\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] [--runs N] <matrix-market-file>\n", argv[0]);
             return EXIT_FAILURE;
         }
     }
@@ -61,7 +75,7 @@ int main(int argc, char **argv)
     if (optind >= argc)
     {
         fprintf(stderr, "Missing matrix file path.\n");
-        fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] <matrix-file-path>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--algorithm lp|bfs] [--threads N] [--runs N] <matrix-file-path>\n", argv[0]);
         return EXIT_FAILURE;
     }
     path = argv[optind];
@@ -84,36 +98,43 @@ int main(int argc, char **argv)
     }
     omp_set_num_threads(num_threads);
 
-    printf("Computing connected components...\n");
+    printf("Computing connected components (%d run%s)...\n", runs, runs == 1 ? "" : "s");
 
-    /* Time the connected components computation */
-    double cc_start = omp_get_wtime();
-
-    if (strcmp(algorithm, "lp") == 0)
+    double total_time = 0.0;
+    for (int run = 0; run < runs; run++)
     {
-        if (num_threads > 1)
+        double cc_start = omp_get_wtime();
+
+        if (strcmp(algorithm, "lp") == 0)
         {
-            compute_connected_components_omp(&G, labels);
+            if (num_threads > 1)
+            {
+                compute_connected_components_omp(&G, labels);
+            }
+            else
+            {
+                compute_connected_components(&G, labels);
+            }
+        }
+        else if (strcmp(algorithm, "bfs") == 0)
+        {
+            compute_connected_components_bfs(&G, labels);
         }
         else
         {
-            compute_connected_components(&G, labels);
+            fprintf(stderr, "Unknown algorithm: %s\n", algorithm);
+            free(labels);
+            free_csr(&G);
+            return EXIT_FAILURE;
         }
-    }
-    else if (strcmp(algorithm, "bfs") == 0)
-    {
-        compute_connected_components_bfs(&G, labels);
-    }
-    else
-    {
-        fprintf(stderr, "Unknown algorithm: %s\n", algorithm);
-        free(labels);
-        free_csr(&G);
-        return EXIT_FAILURE;
+
+        double elapsed = omp_get_wtime() - cc_start;
+        total_time += elapsed;
+        printf("Run %d time: %.6f seconds\n", run + 1, elapsed);
     }
 
-    double cc_end = omp_get_wtime();
-    printf("Connected components time: %.6f seconds\n", cc_end - cc_start);
+    double average_time = total_time / runs;
+    printf("Average time over %d run%s: %.6f seconds\n", runs, runs == 1 ? "" : "s", average_time);
 
     int32_t num_components = count_unique_labels(labels, G.n);
 

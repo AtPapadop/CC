@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include "graph.h"
 #include "cc.h"
 
@@ -15,150 +14,116 @@
 
 typedef struct
 {
-  const CSRGraph *restrict G;
-  int32_t *restrict *restrict labels_ptr;     // shared pointers
-  int32_t *restrict *restrict new_labels_ptr; // shared pointers
-  uint8_t *restrict *restrict active_ptr;     // shared frontier pointers
-  uint8_t *restrict *restrict next_active_ptr;
-  atomic_int *restrict next_vertex;
-  atomic_int *restrict changed;
-  int *restrict done;
-  pthread_barrier_t *restrict barrier;
+  const CSRGraph *G;
+  atomic_int *labels;
+  atomic_int *changed;
+  int32_t n;
   int thread_id;
   int num_threads;
+  pthread_barrier_t *barrier;
 } ThreadArgs;
 
 /* -------------------------------------------------------------------------- */
-/* Worker thread: label propagation with frontier optimization                */
+/* Worker thread: fully asynchronous label propagation                        */
 /* -------------------------------------------------------------------------- */
-static void *lp_worker_dynamic(void *arg)
+static void *lp_worker_full_async(void *arg)
 {
   ThreadArgs *args = (ThreadArgs *)arg;
-  const CSRGraph *restrict G = args->G;
-  const int32_t n = G->n;
+  const CSRGraph *G = args->G;
   const int64_t *restrict row_ptr = G->row_ptr;
   const int32_t *restrict col_idx = G->col_idx;
+  const int32_t n = args->n;
 
   while (1)
   {
     int local_changed = 0;
-    int32_t *restrict labels = *args->labels_ptr;
-    int32_t *restrict new_labels = *args->new_labels_ptr;
-    uint8_t *restrict active = *args->active_ptr;
-    uint8_t *restrict next_active = *args->next_active_ptr;
 
-    // ---- Phase 1: Dynamic work distribution over ACTIVE vertices ----
-    while (1)
+    // Static vertex partition
+    int chunk = (n + args->num_threads - 1) / args->num_threads;
+    int start = args->thread_id * chunk;
+    int end = (start + chunk < n) ? start + chunk : n;
+
+    for (int32_t u = start; u < end; u++)
     {
-      int start = atomic_fetch_add(args->next_vertex, CHUNK_SIZE);
-      if (start >= n)
-        break;
+      int32_t old_label = atomic_load_explicit(&args->labels[u], memory_order_relaxed);
+      int32_t new_label = old_label;
 
-      int end = (start + CHUNK_SIZE < n) ? start + CHUNK_SIZE : n;
-
-      for (int32_t u = start; u < end; u++)
+      // Find minimum label among neighbors
+      for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
       {
-        if (!active[u])
-          continue; // skip inactive vertices
+        int32_t v = col_idx[j];
+        int32_t neighbor_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
+        if (neighbor_label < new_label)
+          new_label = neighbor_label;
+      }
 
-        int32_t old_label = labels[u];
-        int32_t new_label = old_label;
+      if (new_label < old_label)
+      {
+        atomic_store_explicit(&args->labels[u], new_label, memory_order_relaxed);
+        local_changed = 1;
 
+        // Optional: push the new label to neighbors (helps convergence)
         for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
         {
           int32_t v = col_idx[j];
-          int32_t neighbor_label = labels[v];
-          if (neighbor_label < new_label)
-            new_label = neighbor_label;
-        }
-
-        new_labels[u] = new_label;
-        if (new_label < old_label)
-        {
-          local_changed = 1;
-          next_active[u] = 1;
-          // Optionally activate neighbors to converge faster
-          for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
-            next_active[col_idx[j]] = 1;
+          int32_t cur_v_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
+          if (new_label < cur_v_label)
+            atomic_store_explicit(&args->labels[v], new_label, memory_order_relaxed);
         }
       }
     }
 
+    // Mark if this thread changed anything
     if (local_changed)
-      atomic_store(args->changed, 1);
+      atomic_store_explicit(args->changed, 1, memory_order_relaxed);
 
+    // Synchronize all threads
     pthread_barrier_wait(args->barrier);
 
-    // ---- Phase 2: Global synchronization + swap ----
+    // One thread checks for convergence
     if (args->thread_id == 0)
     {
-      if (atomic_load(args->changed) == 0)
+      if (atomic_load_explicit(args->changed, memory_order_acquire) == 0)
       {
-        *args->done = 1; // convergence reached
+        atomic_store_explicit(args->changed, -1, memory_order_release); // signal done
       }
       else
       {
-        *args->done = 0;
-        atomic_store(args->changed, 0);
-        atomic_store(args->next_vertex, 0);
-
-        // swap shared pointers so all threads see new arrays
-        int32_t *tmp = *args->labels_ptr;
-        *args->labels_ptr = *args->new_labels_ptr;
-        *args->new_labels_ptr = tmp;
-
-        // swap frontiers
-        uint8_t *tmp_a = *args->active_ptr;
-        *args->active_ptr = *args->next_active_ptr;
-        *args->next_active_ptr = tmp_a;
-
-        // clear new frontier for next iteration
-        memset(*args->next_active_ptr, 0, n);
+        atomic_store_explicit(args->changed, 0, memory_order_relaxed); // reset flag
       }
     }
 
     pthread_barrier_wait(args->barrier);
 
-    if (*args->done)
+    // Stop condition: changed == -1 means no thread changed anything
+    if (atomic_load_explicit(args->changed, memory_order_acquire) == -1)
       break;
   }
 
   return NULL;
 }
 
-void compute_connected_components_pthreads(const CSRGraph *restrict G, int32_t *restrict labels, int num_threads)
+/* -------------------------------------------------------------------------- */
+/* Entry point: connected components via full asynchronous propagation        */
+/* -------------------------------------------------------------------------- */
+void compute_connected_components_pthreads(const CSRGraph *restrict G,
+                                           int32_t *restrict labels,
+                                           int num_threads)
 {
   const int32_t n = G->n;
 
-  // Initialize label arrays
-  for (int32_t i = 0; i < n; i++)
-    labels[i] = i;
-
-  int32_t *restrict new_labels;
-  if (posix_memalign((void **)&new_labels, 64, n * sizeof(int32_t)) != 0)
+  atomic_int *atomic_labels = aligned_alloc(64, n * sizeof(atomic_int));
+  if (!atomic_labels)
   {
     fprintf(stderr, "Memory allocation failed\n");
     exit(EXIT_FAILURE);
   }
 
-  // Allocate frontier arrays
-  uint8_t *restrict active;
-  uint8_t *restrict next_active;
-  if (posix_memalign((void **)&active, 64, n) != 0 ||
-      posix_memalign((void **)&next_active, 64, n) != 0)
-  {
-    fprintf(stderr, "Memory allocation failed (active sets)\n");
-    free(new_labels);
-    exit(EXIT_FAILURE);
-  }
+  for (int32_t i = 0; i < n; i++)
+    atomic_init(&atomic_labels[i], i);
 
-  memset(active, 1, n); // initially all vertices active
-  memset(next_active, 0, n);
-
-  // Shared synchronization objects
-  atomic_int next_vertex = 0;
-  atomic_int changed = 1;
-  int done = 0;
+  atomic_int changed;
+  atomic_init(&changed, 1);
 
   pthread_barrier_t barrier;
   pthread_barrier_init(&barrier, NULL, num_threads);
@@ -166,37 +131,27 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G, int32_t *
   pthread_t *threads = malloc(num_threads * sizeof(pthread_t));
   ThreadArgs *args = malloc(num_threads * sizeof(ThreadArgs));
 
-  // shared pointers to allow swap visibility
-  int32_t *restrict *restrict labels_ptr = &labels;
-  int32_t *restrict *restrict new_labels_ptr = &new_labels;
-  uint8_t *restrict *restrict active_ptr = &active;
-  uint8_t *restrict *restrict next_active_ptr = &next_active;
-
   for (int t = 0; t < num_threads; t++)
   {
     args[t].G = G;
-    args[t].labels_ptr = labels_ptr;
-    args[t].new_labels_ptr = new_labels_ptr;
-    args[t].active_ptr = active_ptr;
-    args[t].next_active_ptr = next_active_ptr;
-    args[t].next_vertex = &next_vertex;
+    args[t].labels = atomic_labels;
     args[t].changed = &changed;
-    args[t].done = &done;
-    args[t].barrier = &barrier;
+    args[t].n = n;
     args[t].thread_id = t;
     args[t].num_threads = num_threads;
+    args[t].barrier = &barrier;
+    pthread_create(&threads[t], NULL, lp_worker_full_async, &args[t]);
   }
-
-  // Spawn threads
-  for (int t = 0; t < num_threads; t++)
-    pthread_create(&threads[t], NULL, lp_worker_dynamic, &args[t]);
 
   for (int t = 0; t < num_threads; t++)
     pthread_join(threads[t], NULL);
 
-  free(active);
-  free(next_active);
+  // Copy results
+  for (int32_t i = 0; i < n; i++)
+    labels[i] = atomic_load_explicit(&atomic_labels[i], memory_order_relaxed);
+
+  pthread_barrier_destroy(&barrier);
+  free(atomic_labels);
   free(threads);
   free(args);
-  pthread_barrier_destroy(&barrier);
 }
