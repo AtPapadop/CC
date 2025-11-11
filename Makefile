@@ -14,7 +14,7 @@ OBJDIR := build
 BINDIR := bin
 
 # --- Common sources (used by all builds) ---
-COMMON_SRC := src/graph.c src/mmio.c src/cc.c
+COMMON_SRC := src/graph.c src/mmio.c src/cc.c src/results_writer.c
 COMMON_OBJ := $(addprefix $(OBJDIR)/, $(notdir $(COMMON_SRC:.c=.o)))
 
 # --- Executables ---

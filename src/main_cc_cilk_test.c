@@ -8,6 +8,7 @@
  */
 
 #define _GNU_SOURCE
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,7 @@
 #include <getopt.h>
 #include "cc.h"
 #include "graph.h"
+#include "results_writer.h"
 
 // Wall-clock time in seconds
 static inline double wall_time(void)
@@ -32,15 +34,17 @@ int main(int argc, char **argv)
 {
     int runs = 1;
     const char *path = NULL;
+    const char *output_dir = "results";
 
     const struct option long_opts[] = {
         {"runs", required_argument, NULL, 'r'},
+        {"output", required_argument, NULL, 'o'},
         {NULL, 0, NULL, 0}
     };
 
     int opt;
     int opt_index = 0;
-    while ((opt = getopt_long(argc, argv, "r:", long_opts, &opt_index)) != -1)
+    while ((opt = getopt_long(argc, argv, "r:o:", long_opts, &opt_index)) != -1)
     {
         switch (opt)
         {
@@ -56,8 +60,16 @@ int main(int argc, char **argv)
             runs = (int)parsed;
             break;
         }
+        case 'o':
+            if (optarg[0] == '\0')
+            {
+                fprintf(stderr, "Output directory must not be empty.\n");
+                return EXIT_FAILURE;
+            }
+            output_dir = optarg;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [--runs N] <matrix-file>\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--runs N] [--output DIR] <matrix-file>\n", argv[0]);
             fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
             return EXIT_FAILURE;
         }
@@ -65,12 +77,25 @@ int main(int argc, char **argv)
 
     if (optind >= argc)
     {
-        fprintf(stderr, "Usage: %s [--runs N] <matrix-file>\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--runs N] [--output DIR] <matrix-file>\n", argv[0]);
         fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
         return EXIT_FAILURE;
     }
 
     path = argv[optind];
+
+    if (results_writer_ensure_directory(output_dir) != 0)
+    {
+        fprintf(stderr, "Failed to create output directory '%s': %s\n", output_dir, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    char labels_path[PATH_MAX];
+    if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, "cilk_labels.txt") != 0)
+    {
+        fprintf(stderr, "Output path too long for labels file: %s\n", strerror(errno));
+        return EXIT_FAILURE;
+    }
 
     // Report worker configuration
     int workers = __cilkrts_get_nworkers();
@@ -92,6 +117,15 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    double *run_times = (double *)malloc((size_t)runs * sizeof(double));
+    if (!run_times)
+    {
+        fprintf(stderr, "Memory allocation failed\n");
+        free(labels);
+        free_csr(&G);
+        return EXIT_FAILURE;
+    }
+
     printf("Computing connected components (%d run%s)...\n", runs, runs == 1 ? "" : "s");
 
     double total_time = 0.0;
@@ -103,18 +137,36 @@ int main(int argc, char **argv)
         double elapsed = end - start;
         total_time += elapsed;
         printf("Run %d time: %.6f seconds\n", run + 1, elapsed);
+        run_times[run] = elapsed;
     }
 
     double average = total_time / runs;
     printf("Average time over %d run%s: %.6f seconds\n", runs, runs == 1 ? "" : "s", average);
 
+    char column_name[64];
+    snprintf(column_name, sizeof(column_name), "%d Threads", workers);
+    char results_path[PATH_MAX];
+    if (results_writer_join_path(results_path, sizeof(results_path), output_dir, "results_cilk.csv") != 0)
+    {
+        fprintf(stderr, "Warning: Output path too long for results file: %s\n", strerror(errno));
+    }
+    else
+    {
+        results_writer_status csv_status = append_times_column(results_path, column_name, run_times, (size_t)runs);
+        if (csv_status != RESULTS_WRITER_OK)
+        {
+            fprintf(stderr, "Warning: Failed to update %s (error %d)\n", results_path, (int)csv_status);
+        }
+    }
+
     int32_t num_components = count_unique_labels(labels, G.n);
     printf("Number of connected components: %d\n", num_components);
 
-    FILE *fout = fopen("cilk_labels.txt", "w");
+    FILE *fout = fopen(labels_path, "w");
     if (!fout)
     {
-        fprintf(stderr, "Failed to open output file\n");
+        fprintf(stderr, "Failed to open output file %s\n", labels_path);
+        free(run_times);
         free(labels);
         free_csr(&G);
         return EXIT_FAILURE;
@@ -123,8 +175,10 @@ int main(int argc, char **argv)
         fprintf(fout, "%d\n", labels[i]);
     fclose(fout);
 
-    printf("Labels written to cilk_labels.txt\n");
+    printf("Labels written to %s\n", labels_path);
+    printf("Time results written to %s\n", results_path);
 
+    free(run_times);
     free(labels);
     free_csr(&G);
     return EXIT_SUCCESS;
