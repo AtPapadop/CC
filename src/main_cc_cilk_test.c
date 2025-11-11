@@ -90,8 +90,15 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    const char *method_base = "cilk";
+    char method_name[32];
+    snprintf(method_name, sizeof(method_name), "%s", method_base);
+
+    char labels_filename[64];
+    snprintf(labels_filename, sizeof(labels_filename), "%s_labels.txt", method_name);
+
     char labels_path[PATH_MAX];
-    if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, "cilk_labels.txt") != 0)
+    if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, labels_filename) != 0)
     {
         fprintf(stderr, "Output path too long for labels file: %s\n", strerror(errno));
         return EXIT_FAILURE;
@@ -145,13 +152,21 @@ int main(int argc, char **argv)
 
     char column_name[64];
     snprintf(column_name, sizeof(column_name), "%d Threads", workers);
+
+    int results_path_ready = 0;
     char results_path[PATH_MAX];
-    if (results_writer_join_path(results_path, sizeof(results_path), output_dir, "results_cilk.csv") != 0)
+    results_path[0] = '\0';
+
+    char results_prefix[32];
+    snprintf(results_prefix, sizeof(results_prefix), "results_%s", method_base);
+
+    if (results_writer_build_results_path(results_path, sizeof(results_path), output_dir, results_prefix, path) != 0)
     {
-        fprintf(stderr, "Warning: Output path too long for results file: %s\n", strerror(errno));
+        fprintf(stderr, "Warning: Failed to build results path: %s\n", strerror(errno));
     }
     else
     {
+        results_path_ready = 1;
         results_writer_status csv_status = append_times_column(results_path, column_name, run_times, (size_t)runs);
         if (csv_status != RESULTS_WRITER_OK)
         {
@@ -176,7 +191,8 @@ int main(int argc, char **argv)
     fclose(fout);
 
     printf("Labels written to %s\n", labels_path);
-    printf("Time results written to %s\n", results_path);
+    if (results_path_ready)
+        printf("Time results written to %s\n", results_path);
 
     free(run_times);
     free(labels);

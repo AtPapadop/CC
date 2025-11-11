@@ -14,138 +14,70 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
   const int64_t *restrict row_ptr = G->row_ptr;
   const int32_t *restrict col_idx = G->col_idx;
 
-// --- Initialize labels ---
-#pragma omp parallel for schedule(static)
+  #pragma omp parallel for schedule(static)
   for (int32_t i = 0; i < n; i++)
     labels[i] = i;
 
-  // --- Aligned double buffers for labels ---
-  int32_t *aux_labels;
-  if (posix_memalign((void **)&aux_labels, 64, n * sizeof(int32_t)) != 0)
+  _Atomic int32_t *atomic_labels;
+  if (posix_memalign((void **)&atomic_labels, 64, (size_t)n * sizeof(*atomic_labels)) != 0)
   {
-    fprintf(stderr, "Memory allocation failed (labels)\n");
-    exit(EXIT_FAILURE);
-  }
-  int32_t *label_buffers[2] = {labels, aux_labels};
-  int active_idx = 0;
-
-  // --- Frontier arrays ---
-  uint8_t *active;
-  uint8_t *next_active;
-  if (posix_memalign((void **)&active, 64, n) != 0 ||
-      posix_memalign((void **)&next_active, 64, n) != 0)
-  {
-    fprintf(stderr, "Memory allocation failed (frontiers)\n");
-    free(aux_labels);
+    fprintf(stderr, "Memory allocation failed (atomic labels)\n");
     exit(EXIT_FAILURE);
   }
 
-  memset(active, 1, n); // all vertices active initially
-  memset(next_active, 0, n);
-
-  // --- Temporary array for active vertex indices ---
-  int32_t *active_list = malloc(n * sizeof(int32_t));
-  if (!active_list)
-  {
-    fprintf(stderr, "Memory allocation failed (active_list)\n");
-    free(aux_labels);
-    free(active);
-    free(next_active);
-    exit(EXIT_FAILURE);
-  }
+  #pragma omp parallel for schedule(static)
+  for (int32_t i = 0; i < n; i++)
+    atomic_store_explicit(&atomic_labels[i], labels[i], memory_order_relaxed);
 
   while (1)
   {
     int changed = 0;
-    const int read_idx = active_idx;
-    const int write_idx = read_idx ^ 1;
-    const int32_t *restrict current_labels = label_buffers[read_idx];
-    int32_t *restrict next_labels = label_buffers[write_idx];
 
-    // --- Build compact active list ---
-    int active_count = 0;
-    #pragma omp parallel
+    #pragma omp parallel for schedule(static) reduction(|| : changed)
+    for (int32_t u = 0; u < n; u++)
     {
-      int32_t *local_buf = malloc((n / omp_get_num_threads() + 1) * sizeof(int32_t));
-      int local_count = 0;
+      int32_t old_label = atomic_load_explicit(&atomic_labels[u], memory_order_relaxed);
+      int32_t new_label = old_label;
 
-      #pragma omp for nowait schedule(static)
-      for (int32_t u = 0; u < n; u++)
-        if (active[u])
-          local_buf[local_count++] = u;
-
-      int offset;
-      #pragma omp atomic capture
-      offset = active_count += local_count;
-
-      memcpy(active_list + offset - local_count, local_buf, local_count * sizeof(int32_t));
-      free(local_buf);
-    }
-
-    if (active_count == 0)
-      break;
-
-    // --- Process active vertices ---
-    #pragma omp parallel for schedule(dynamic, 64) reduction(|| : changed)
-    for (int i = 0; i < active_count; i++)
-    {
-      int32_t u = active_list[i];
-      int32_t new_label = current_labels[u];
-
-      // Find smallest label among neighbors
       for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
       {
         int32_t v = col_idx[j];
-        if (current_labels[v] < new_label)
-          new_label = current_labels[v];
+        int32_t neighbor_label = atomic_load_explicit(&atomic_labels[v], memory_order_relaxed);
+        if (neighbor_label < new_label)
+          new_label = neighbor_label;
       }
 
-      next_labels[u] = new_label;
-
-      if (new_label < current_labels[u])
+      if (new_label < old_label)
       {
-        changed = 1;
-        next_active[u] = 1;
+        int32_t current = old_label;
+        while (current > new_label &&
+               !atomic_compare_exchange_weak_explicit(&atomic_labels[u], &current,
+                                                      new_label, memory_order_relaxed, memory_order_relaxed))
+        {
+        }
 
-        // Optionally activate neighbors (skip redundant writes)
-        int64_t start = row_ptr[u];
-        int64_t end = row_ptr[u + 1];
-        for (int64_t j = start; j < end; j++)
+        changed = 1;
+
+        for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
         {
           int32_t v = col_idx[j];
-          if (!next_active[v])
-            next_active[v] = 1;
+          int32_t neighbor = atomic_load_explicit(&atomic_labels[v], memory_order_relaxed);
+          while (neighbor > new_label &&
+                 !atomic_compare_exchange_weak_explicit(&atomic_labels[v], &neighbor,
+                                                        new_label, memory_order_relaxed, memory_order_relaxed))
+          {
+          }
         }
       }
     }
 
     if (!changed)
       break;
-
-    active_idx ^= 1;
-
-    // --- Swap buffers ---
-    uint8_t *tmp_frontier = active;
-    active = next_active;
-    next_active = tmp_frontier;
-
-// --- Parallel clear next frontier ---
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; i++)
-      next_active[i] = 0;
   }
 
-  // --- Copy back final labels ---
-  if (active_idx != 0)
-  {
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; i++)
-      labels[i] = label_buffers[active_idx][i];
-  }
+#pragma omp parallel for schedule(static)
+  for (int32_t i = 0; i < n; i++)
+    labels[i] = atomic_load_explicit(&atomic_labels[i], memory_order_relaxed);
 
-  // --- Cleanup ---
-  free(aux_labels);
-  free(active);
-  free(next_active);
-  free(active_list);
+  free(atomic_labels);
 }

@@ -98,8 +98,31 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    char method_base[16] = "";
+    if (strcmp(algorithm, "lp") == 0)
+    {
+        if (num_threads > 1)
+            strncpy(method_base, "omp", sizeof(method_base) - 1);
+        else
+            strncpy(method_base, "c", sizeof(method_base) - 1);
+    }
+    else if (strcmp(algorithm, "bfs") == 0)
+    {
+        strncpy(method_base, "bfs", sizeof(method_base) - 1);
+    }
+
+    char method_name[32] = "";
+    if (method_base[0] != '\0')
+    {
+        snprintf(method_name, sizeof(method_name), "%s", method_base);
+    }
+
+    char labels_filename[64] = "c_labels.txt";
+    if (method_name[0] != '\0')
+        snprintf(labels_filename, sizeof(labels_filename), "%s_labels.txt", method_name);
+
     char labels_path[PATH_MAX];
-    if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, "c_labels.txt") != 0)
+    if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, labels_filename) != 0)
     {
         fprintf(stderr, "Output path too long for labels file: %s\n", strerror(errno));
         return EXIT_FAILURE;
@@ -172,32 +195,37 @@ int main(int argc, char **argv)
     double average_time = total_time / runs;
     printf("Average time over %d run%s: %.6f seconds\n", runs, runs == 1 ? "" : "s", average_time);
 
-    const char *results_file = NULL;
     char column_name[64] = "";
+    const char *results_prefix = NULL;
+
     char results_path[PATH_MAX];
+    results_path[0] = '\0';
+    int results_path_ready = 0;
 
     if (strcmp(algorithm, "lp") == 0)
     {
-        results_file = "results_omp.csv";
         if (num_threads == 1)
             snprintf(column_name, sizeof(column_name), "1 Thread");
         else
             snprintf(column_name, sizeof(column_name), "%d Threads", num_threads);
+
+        results_prefix = "results_omp";
     }
     else if (strcmp(algorithm, "bfs") == 0)
     {
-        results_file = "results_bfs.csv";
         snprintf(column_name, sizeof(column_name), "BFS");
+        results_prefix = "results_bfs";
     }
 
-    if (results_file && column_name[0] != '\0')
+    if (results_prefix && column_name[0] != '\0')
     {
-        if (results_writer_join_path(results_path, sizeof(results_path), output_dir, results_file) != 0)
+        if (results_writer_build_results_path(results_path, sizeof(results_path), output_dir, results_prefix, path) != 0)
         {
-            fprintf(stderr, "Warning: Output path too long for results file '%s': %s\n", results_file, strerror(errno));
+            fprintf(stderr, "Warning: Failed to build results path: %s\n", strerror(errno));
         }
         else
         {
+            results_path_ready = 1;
             results_writer_status status = append_times_column(results_path, column_name, run_times, (size_t)runs);
             if (status != RESULTS_WRITER_OK)
                 fprintf(stderr, "Warning: Failed to update %s (error %d)\n", results_path, (int)status);
@@ -226,7 +254,8 @@ int main(int argc, char **argv)
     fclose(fout);
 
     printf("Labels written to %s\n", labels_path);
-    printf("Time results written to %s\n", results_path);
+    if (results_path_ready)
+        printf("Time results written to %s\n", results_path);
 
     free(run_times);
     free(labels);

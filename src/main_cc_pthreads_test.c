@@ -149,13 +149,17 @@ int main(int argc, char **argv)
 
     char column_name[64];
     snprintf(column_name, sizeof(column_name), "%d Threads", num_threads);
+
+    int results_path_ready = 0;
     char results_path[PATH_MAX];
-    if (results_writer_join_path(results_path, sizeof(results_path), output_dir, "results_pthred.csv") != 0)
+    results_path[0] = '\0';
+    if (results_writer_build_results_path(results_path, sizeof(results_path), output_dir, "results_pthred", path) != 0)
     {
-        fprintf(stderr, "Warning: Output path too long for results file: %s\n", strerror(errno));
+        fprintf(stderr, "Warning: Failed to build results path: %s\n", strerror(errno));
     }
     else
     {
+        results_path_ready = 1;
         results_writer_status csv_status = append_times_column(results_path, column_name, run_times, (size_t)runs);
         if (csv_status != RESULTS_WRITER_OK)
             fprintf(stderr, "Warning: Failed to update %s (error %d)\n", results_path, (int)csv_status);
@@ -179,7 +183,8 @@ int main(int argc, char **argv)
 
     fclose(fout);
     printf("Labels written to %s\n", labels_path);
-    printf("Time results written to %s\n", results_path);
+    if (results_path_ready)
+        printf("Time results written to %s\n", results_path);
 
     free(run_times);
     free(labels);

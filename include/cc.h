@@ -4,23 +4,24 @@
 #include "graph.h"
 #include <stdint.h>
 
-// Sequential connected components algorithm using label propagation with frontier optimization
+// Sequential connected components algorithm using label propagation
 // Non optimal for sequential execution but simple to parallelize later
-void compute_connected_components(const CSRGraph *restrict G, int32_t *restrict labels);
+void compute_connected_components(const CSRGraph *restrict G,
+                                  int32_t *restrict labels);
 
 // Connected components algorithm using BFS
 // This is viable only for sequential execution
 void compute_connected_components_bfs(const CSRGraph *restrict G, int32_t *restrict labels);
 
-// Parallel connected components algorithm using OpenMP with frontier optimization
+// Parallel connected components algorithm using OpenMP
 // Identical to the label propagation version but using OpenMP for loop parallelism
 void compute_connected_components_omp(const CSRGraph *restrict G, int32_t *restrict labels);
 
-// Parallel connected components algorithm using OpenCilk with frontier optimization
+// Parallel connected components algorithm using OpenCilk
 // Identical to the label propagation version but using Cilk for loop parallelism
 void compute_connected_components_cilk(const CSRGraph *restrict G, int32_t *restrict labels);
 
-// Parallel connected components algorithm using pthreads with frontier optimization
+// Parallel connected components algorithm using pthreads
 // More complex implementation using pthreads for parallelism
 void compute_connected_components_pthreads(const CSRGraph *restrict G, int32_t *restrict labels, int num_threads);
 

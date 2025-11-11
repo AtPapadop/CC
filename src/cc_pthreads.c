@@ -12,6 +12,7 @@
 
 #define CHUNK_SIZE 4096
 
+// Thread arguments structure for pthreads
 typedef struct
 {
   const CSRGraph *G;
@@ -23,9 +24,7 @@ typedef struct
   pthread_barrier_t *barrier;
 } ThreadArgs;
 
-/* -------------------------------------------------------------------------- */
-/* Worker thread: fully asynchronous label propagation                        */
-/* -------------------------------------------------------------------------- */
+// Worker thread: fully asynchronous label propagation                        
 static void *lp_worker_full_async(void *arg)
 {
   ThreadArgs *args = (ThreadArgs *)arg;
@@ -103,9 +102,6 @@ static void *lp_worker_full_async(void *arg)
   return NULL;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Entry point: connected components via full asynchronous propagation        */
-/* -------------------------------------------------------------------------- */
 void compute_connected_components_pthreads(const CSRGraph *restrict G,
                                            int32_t *restrict labels,
                                            int num_threads)

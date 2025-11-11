@@ -83,6 +83,85 @@ int results_writer_join_path(char *dest,
     return 0;
 }
 
+static const char *fallback_matrix_stem(void)
+{
+    return "graph";
+}
+
+int results_writer_matrix_stem(const char *matrix_path,
+                               char *dest,
+                               size_t dest_size)
+{
+    if (!dest || dest_size == 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    dest[0] = '\0';
+
+    const char *path = matrix_path ? matrix_path : "";
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+
+    if (!base || *base == '\0')
+        base = fallback_matrix_stem();
+
+    size_t base_len = strlen(base);
+    if (base_len + 1 > dest_size)
+    {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    memcpy(dest, base, base_len + 1);
+
+    char *dot = strrchr(dest, '.');
+    if (dot && dot != dest)
+        *dot = '\0';
+
+    if (dest[0] == '\0')
+    {
+        const char *fallback = fallback_matrix_stem();
+        size_t fallback_len = strlen(fallback);
+        if (fallback_len + 1 > dest_size)
+        {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        memcpy(dest, fallback, fallback_len + 1);
+    }
+
+    return 0;
+}
+
+int results_writer_build_results_path(char *dest,
+                                      size_t dest_size,
+                                      const char *output_dir,
+                                      const char *prefix,
+                                      const char *matrix_path)
+{
+    if (!dest || dest_size == 0 || !output_dir || !prefix)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    char stem[PATH_MAX];
+    if (results_writer_matrix_stem(matrix_path, stem, sizeof(stem)) != 0)
+        return -1;
+
+    char filename[PATH_MAX];
+    int written = snprintf(filename, sizeof(filename), "%s_%s.csv", prefix, stem);
+    if (written < 0 || (size_t)written >= sizeof(filename))
+    {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+
+    return results_writer_join_path(dest, dest_size, output_dir, filename);
+}
+
 static void free_column(CsvColumn *col)
 {
     if (!col)
