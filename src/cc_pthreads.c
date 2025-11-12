@@ -18,6 +18,7 @@ typedef struct
   const CSRGraph *G;
   atomic_int *labels;
   atomic_int *changed;
+  atomic_int *next_vertex; // dynamic work index for chunk distribution
   int32_t n;
   int thread_id;
   int num_threads;
@@ -37,37 +38,47 @@ static void *lp_worker_full_async(void *arg)
   {
     int local_changed = 0;
 
-    // Static vertex partition
-    int chunk = (n + args->num_threads - 1) / args->num_threads;
-    int start = args->thread_id * chunk;
-    int end = (start + chunk < n) ? start + chunk : n;
+    // Reset dynamic work queue at the start of the round
+    if (args->thread_id == 0)
+      atomic_store_explicit(args->next_vertex, 0, memory_order_relaxed);
+    pthread_barrier_wait(args->barrier);
 
-    for (int32_t u = start; u < end; u++)
+    // Dynamic work distribution via atomic index in CHUNK_SIZE blocks
+    while (1)
     {
-      int32_t old_label = atomic_load_explicit(&args->labels[u], memory_order_relaxed);
-      int32_t new_label = old_label;
+      int start = atomic_fetch_add_explicit(args->next_vertex, CHUNK_SIZE, memory_order_relaxed);
+      if (start >= n)
+        break;
+      int end = start + CHUNK_SIZE;
+      if (end > n) end = n;
 
-      // Find minimum label among neighbors
-      for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
+      for (int32_t u = start; u < end; u++)
       {
-        int32_t v = col_idx[j];
-        int32_t neighbor_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
-        if (neighbor_label < new_label)
-          new_label = neighbor_label;
-      }
+        int32_t old_label = atomic_load_explicit(&args->labels[u], memory_order_relaxed);
+        int32_t new_label = old_label;
 
-      if (new_label < old_label)
-      {
-        atomic_store_explicit(&args->labels[u], new_label, memory_order_relaxed);
-        local_changed = 1;
-
-        // Optional: push the new label to neighbors (helps convergence)
+        // Find minimum label among neighbors
         for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
         {
           int32_t v = col_idx[j];
-          int32_t cur_v_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
-          if (new_label < cur_v_label)
-            atomic_store_explicit(&args->labels[v], new_label, memory_order_relaxed);
+          int32_t neighbor_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
+          if (neighbor_label < new_label)
+            new_label = neighbor_label;
+        }
+
+        if (new_label < old_label)
+        {
+          atomic_store_explicit(&args->labels[u], new_label, memory_order_relaxed);
+          local_changed = 1;
+
+          // Optional: push the new label to neighbors (helps convergence)
+          for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
+          {
+            int32_t v = col_idx[j];
+            int32_t cur_v_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
+            if (new_label < cur_v_label)
+              atomic_store_explicit(&args->labels[v], new_label, memory_order_relaxed);
+          }
         }
       }
     }
@@ -108,8 +119,8 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
 {
   const int32_t n = G->n;
 
-  atomic_int *atomic_labels = aligned_alloc(64, n * sizeof(atomic_int));
-  if (!atomic_labels)
+  atomic_int *atomic_labels;
+  if (posix_memalign((void **)&atomic_labels, 64, (size_t)n * sizeof(atomic_int)) != 0)
   {
     fprintf(stderr, "Memory allocation failed\n");
     exit(EXIT_FAILURE);
@@ -120,6 +131,10 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
 
   atomic_int changed;
   atomic_init(&changed, 1);
+
+  // Dynamic work index for chunk-based scheduling
+  atomic_int next_vertex;
+  atomic_init(&next_vertex, 0);
 
   pthread_barrier_t barrier;
   pthread_barrier_init(&barrier, NULL, num_threads);
@@ -132,6 +147,7 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
     args[t].G = G;
     args[t].labels = atomic_labels;
     args[t].changed = &changed;
+    args[t].next_vertex = &next_vertex;
     args[t].n = n;
     args[t].thread_id = t;
     args[t].num_threads = num_threads;
