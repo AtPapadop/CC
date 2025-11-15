@@ -1,10 +1,12 @@
 /* CC Test (OpenCilk)
  *
- * Loads a graph from a Matrix Market or MATLAB file, computes connected components using
- * label propagation (LP) with OpenCilk parallelism, and writes labels to a file.
+ * Loads a Matrix Market or MATLAB graph, runs the OpenCilk label propagation
+ * implementation for the configured worker count, and records timings plus
+ * labels. Use --runs/--chunk-size/--output to control benchmarking parameters.
  *
- * Usage:
- *   CILK_NWORKERS=N ./cc_test_cilk <matrix-file>
+ * Example:
+ *   CILK_NWORKERS=8 ./cc_cilk [OPTIONS] <matrix-file-path>
+ * See --help for the full list of options.
  */
 
 #define _GNU_SOURCE
@@ -20,7 +22,21 @@
 #include <getopt.h>
 #include "cc.h"
 #include "graph.h"
+#include "opt_parser.h"
 #include "results_writer.h"
+
+static void print_usage(const char *prog)
+{
+    fprintf(stderr,
+            "Usage: %s [OPTIONS] <matrix-file>\n\n"
+            "Options:\n"
+            "  -r, --runs N          Number of runs to average (default 1)\n"
+            "  -o, --output DIR      Output directory (default 'results')\n"
+            "  -c, --chunk-size N    Chunk size for label propagation (default 2048)\n"
+            "  -h, --help            Show this message\n"
+            "Example: CILK_NWORKERS=8 %s data/graph.mtx\n",
+            prog, prog);
+}
 
 // Wall-clock time in seconds
 static inline double wall_time(void)
@@ -33,33 +49,31 @@ static inline double wall_time(void)
 int main(int argc, char **argv)
 {
     int runs = 1;
+    int chunk_size = 2048;
     const char *path = NULL;
     const char *output_dir = "results";
 
     const struct option long_opts[] = {
         {"runs", required_argument, NULL, 'r'},
         {"output", required_argument, NULL, 'o'},
+        {"chunk-size", required_argument, NULL, 'c'},
+        {"help", no_argument, NULL, 'h'},
         {NULL, 0, NULL, 0}
     };
 
     int opt;
     int opt_index = 0;
-    while ((opt = getopt_long(argc, argv, "r:o:", long_opts, &opt_index)) != -1)
+    while ((opt = getopt_long(argc, argv, "r:o:c:h", long_opts, &opt_index)) != -1)
     {
         switch (opt)
         {
         case 'r':
-        {
-            char *endptr = NULL;
-            long parsed = strtol(optarg, &endptr, 10);
-            if (optarg[0] == '\0' || *endptr != '\0' || parsed <= 0 || parsed > INT_MAX)
+            if (opt_parse_positive_int(optarg, &runs) != 0)
             {
                 fprintf(stderr, "Invalid run count: %s\n", optarg);
                 return EXIT_FAILURE;
             }
-            runs = (int)parsed;
             break;
-        }
         case 'o':
             if (optarg[0] == '\0')
             {
@@ -68,17 +82,25 @@ int main(int argc, char **argv)
             }
             output_dir = optarg;
             break;
+        case 'c':
+            if (opt_parse_positive_int(optarg, &chunk_size) != 0)
+            {
+                fprintf(stderr, "Invalid chunk size: %s\n", optarg);
+                return EXIT_FAILURE;
+            }
+            break;
+        case 'h':
+            print_usage(argv[0]);
+            return EXIT_SUCCESS;
         default:
-            fprintf(stderr, "Usage: %s [--runs N] [--output DIR] <matrix-file>\n", argv[0]);
-            fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
+            print_usage(argv[0]);
             return EXIT_FAILURE;
         }
     }
 
     if (optind >= argc)
     {
-        fprintf(stderr, "Usage: %s [--runs N] [--output DIR] <matrix-file>\n", argv[0]);
-        fprintf(stderr, "Example: CILK_NWORKERS=8 %s data/graph.mtx\n", argv[0]);
+        print_usage(argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -139,7 +161,7 @@ int main(int argc, char **argv)
     for (int run = 0; run < runs; run++)
     {
         double start = wall_time();
-        compute_connected_components_cilk(&G, labels);
+    compute_connected_components_cilk(&G, labels, chunk_size);
         double end = wall_time();
         double elapsed = end - start;
         total_time += elapsed;

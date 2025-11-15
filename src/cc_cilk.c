@@ -7,11 +7,14 @@
 #include <stdatomic.h>
 #include <cilk/cilk.h>
 
-void compute_connected_components_cilk(const CSRGraph *restrict G, int32_t *restrict labels)
+void compute_connected_components_cilk(const CSRGraph *restrict G,
+                                       int32_t *restrict labels,
+                                       int chunk_size)
 {
   const int32_t n = G->n;
   const int64_t *restrict row_ptr = G->row_ptr;
   const int32_t *restrict col_idx = G->col_idx;
+  const int effective_chunk = (chunk_size > 0) ? chunk_size : DEFAULT_CHUNK_SIZE;
 
   // --- Initialize labels ---
   for (int32_t i = 0; i < n; i++)
@@ -31,10 +34,10 @@ void compute_connected_components_cilk(const CSRGraph *restrict G, int32_t *rest
   {
     _Atomic int any_changed = 0;
 
-    cilk_for(int32_t base = 0; base < n; base += 1024)
+    cilk_for(int32_t base = 0; base < n; base += effective_chunk)
     {
       int local_changed = 0;
-      int32_t end = (base + 1024 < n) ? base + 1024 : n;
+      int32_t end = (base + effective_chunk < n) ? base + effective_chunk : n;
 
       for (int32_t u = base; u < end; u++)
       {

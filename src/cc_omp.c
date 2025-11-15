@@ -8,13 +8,15 @@
 #include <stdatomic.h>
 
 void compute_connected_components_omp(const CSRGraph *restrict G,
-                                      int32_t *restrict labels)
+                                      int32_t *restrict labels,
+                                      int chunk_size)
 {
   const int32_t n = G->n;
   const int64_t *restrict row_ptr = G->row_ptr;
   const int32_t *restrict col_idx = G->col_idx;
+  const int effective_chunk = (chunk_size > 0) ? chunk_size : DEFAULT_CHUNK_SIZE;
 
-  #pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static)
   for (int32_t i = 0; i < n; i++)
     labels[i] = i;
 
@@ -25,7 +27,7 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
     exit(EXIT_FAILURE);
   }
 
-  #pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static)
   for (int32_t i = 0; i < n; i++)
     atomic_store_explicit(&atomic_labels[i], labels[i], memory_order_relaxed);
 
@@ -33,7 +35,8 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
   {
     int changed = 0;
 
-    #pragma omp parallel for schedule(static) reduction(|| : changed)
+// Dynamic scheduling with caller-provided chunk size
+#pragma omp parallel for schedule(dynamic, effective_chunk) reduction(|| : changed)
     for (int32_t u = 0; u < n; u++)
     {
       int32_t old_label = atomic_load_explicit(&atomic_labels[u], memory_order_relaxed);

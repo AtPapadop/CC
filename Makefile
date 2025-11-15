@@ -14,35 +14,38 @@ OBJDIR := build
 BINDIR := bin
 
 # --- Common sources (used by all builds) ---
-COMMON_SRC := src/graph.c src/mmio.c src/cc.c src/results_writer.c
+COMMON_SRC := src/graph.c src/mmio.c src/cc.c src/results_writer.c src/opt_parser.c
 COMMON_OBJ := $(addprefix $(OBJDIR)/, $(notdir $(COMMON_SRC:.c=.o)))
 
 # --- Executables ---
-READ_TARGET := $(BINDIR)/read_mtx
-OMP_TARGET  := $(BINDIR)/cc_test
-CILK_TARGET := $(BINDIR)/cc_test_cilk
-PTHREADS_TARGET := $(BINDIR)/cc_test_pthreads
+SEQ_TARGET  := $(BINDIR)/cc
+OMP_TARGET  := $(BINDIR)/cc_omp
+CILK_TARGET := $(BINDIR)/cc_cilk
+PTHREADS_TARGET := $(BINDIR)/cc_pthreads
+PTHREADS_SWEEP_TARGET := $(BINDIR)/cc_pthreads_sweep
 
 # --- Source files for each tool ---
-READ_MAIN := src/main_read_test.c
-OMP_MAIN  := src/main_cc_test.c
-CILK_MAIN := src/main_cc_cilk_test.c
-PTHREADS_MAIN := src/main_cc_pthreads_test.c
+SEQ_MAIN := src/main_cc.c
+OMP_MAIN  := src/main_cc_omp.c
+CILK_MAIN := src/main_cc_cilk.c
+PTHREADS_MAIN := src/main_cc_pthreads.c
+PTHREADS_SWEEP_MAIN := src/main_cc_pthreads_sweep.c
 
-READ_OBJ := $(OBJDIR)/$(notdir $(READ_MAIN:.c=.o))
+SEQ_OBJ := $(OBJDIR)/$(notdir $(SEQ_MAIN:.c=.o))
 OMP_OBJ  := $(OBJDIR)/$(notdir $(OMP_MAIN:.c=.o))
 CILK_OBJ := $(OBJDIR)/$(notdir $(CILK_MAIN:.c=.o))
 PTHREADS_OBJ := $(OBJDIR)/$(notdir $(PTHREADS_MAIN:.c=.o))
+PTHREADS_SWEEP_OBJ := $(OBJDIR)/$(notdir $(PTHREADS_SWEEP_MAIN:.c=.o))
 
 # --- Build all ---
-all: $(READ_TARGET) $(OMP_TARGET) $(CILK_TARGET) $(PTHREADS_TARGET)
+all: $(SEQ_TARGET) $(OMP_TARGET) $(CILK_TARGET) $(PTHREADS_TARGET) $(PTHREADS_SWEEP_TARGET)
 
-# --- read_mtx tool ---
-$(READ_TARGET): $(COMMON_OBJ) $(READ_OBJ) | $(BINDIR)
+# --- cc (sequential LP + BFS) ---
+$(SEQ_TARGET): $(COMMON_OBJ) $(SEQ_OBJ) | $(BINDIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 	@echo "Built $@"
 
-# --- cc_test (sequential + OpenMP) ---
+# --- cc_omp (OpenMP label propagation) ---
 OMP_SRC      := $(COMMON_SRC) src/cc_omp.c
 OMP_OBJ_FULL := $(addprefix $(OBJDIR)/, $(notdir $(OMP_SRC:.c=.o))) $(OMP_OBJ)
 
@@ -50,15 +53,22 @@ $(OMP_TARGET): $(OMP_OBJ_FULL) | $(BINDIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 	@echo "Built $@"
 
-# --- cc_test_pthreads (POSIX Threads) ---
+# --- cc_pthreads (POSIX Threads) ---
 PTHREADS_SRC_FULL := $(COMMON_SRC) src/cc_pthreads.c
-PTHREADS_OBJ_FULL := $(addprefix $(OBJDIR)/, $(notdir $(PTHREADS_SRC_FULL:.c=.o))) $(PTHREADS_OBJ)
+PTHREADS_SHARED_OBJ := $(addprefix $(OBJDIR)/, $(notdir $(PTHREADS_SRC_FULL:.c=.o)))
+PTHREADS_OBJ_FULL := $(PTHREADS_SHARED_OBJ) $(PTHREADS_OBJ)
+PTHREADS_SWEEP_OBJ_FULL := $(PTHREADS_SHARED_OBJ) $(PTHREADS_SWEEP_OBJ)
 
 $(PTHREADS_TARGET): $(PTHREADS_OBJ_FULL) | $(BINDIR)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lpthread
 	@echo "Built $@"
 
-# --- cc_test_cilk (OpenCilk) ---
+# --- cc_pthreads_sweep (parameter sweep) ---
+$(PTHREADS_SWEEP_TARGET): $(PTHREADS_SWEEP_OBJ_FULL) | $(BINDIR)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS) -lpthread
+	@echo "Built $@"
+
+# --- cc_cilk (OpenCilk) ---
 CILK_SRC_FULL := $(COMMON_SRC) src/cc_cilk.c
 CILK_OBJ_FULL := $(addprefix $(OBJDIR)/, $(notdir $(CILK_SRC_FULL:.c=.o))) $(CILK_OBJ)
 
@@ -75,7 +85,7 @@ $(CILK_TARGET): $(CILK_OBJ_FULL) | $(BINDIR)
 $(OBJDIR)/cc_cilk.o: src/cc_cilk.c | $(OBJDIR)
 	$(CILK_CC) $(CILK_FLAGS) -c $< -o $@
 
-$(OBJDIR)/main_cc_cilk_test.o: src/main_cc_cilk_test.c | $(OBJDIR)
+$(OBJDIR)/main_cc_cilk.o: src/main_cc_cilk.c | $(OBJDIR)
 	$(CILK_CC) $(CILK_FLAGS) -c $< -o $@
 
 # --- Generic compile rule (GCC for non-Cilk .c) ---
@@ -96,9 +106,10 @@ clean:
 	@echo "Cleaned build artifacts."
 
 # --- Convenience aliases ---
+seq:   $(SEQ_TARGET)
 omp:   $(OMP_TARGET)
 cilk:  $(CILK_TARGET)
-read:  $(READ_TARGET)
 pthreads: $(PTHREADS_TARGET)
+pthreads_sweep: $(PTHREADS_SWEEP_TARGET)
 
-.PHONY: all clean omp cilk read pthreads
+.PHONY: all clean seq omp cilk pthreads pthreads_sweep

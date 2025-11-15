@@ -10,8 +10,6 @@
 #include "graph.h"
 #include "cc.h"
 
-#define CHUNK_SIZE 4096
-
 // Thread arguments structure for pthreads
 typedef struct
 {
@@ -23,9 +21,10 @@ typedef struct
   int thread_id;
   int num_threads;
   pthread_barrier_t *barrier;
+  int chunk_size;
 } ThreadArgs;
 
-// Worker thread: fully asynchronous label propagation                        
+// Worker thread: fully asynchronous label propagation
 static void *lp_worker_full_async(void *arg)
 {
   ThreadArgs *args = (ThreadArgs *)arg;
@@ -33,6 +32,7 @@ static void *lp_worker_full_async(void *arg)
   const int64_t *restrict row_ptr = G->row_ptr;
   const int32_t *restrict col_idx = G->col_idx;
   const int32_t n = args->n;
+  const int chunk = args->chunk_size;
 
   while (1)
   {
@@ -43,14 +43,15 @@ static void *lp_worker_full_async(void *arg)
       atomic_store_explicit(args->next_vertex, 0, memory_order_relaxed);
     pthread_barrier_wait(args->barrier);
 
-    // Dynamic work distribution via atomic index in CHUNK_SIZE blocks
+    // Dynamic work distribution via atomic index in chunk_size blocks
     while (1)
     {
-      int start = atomic_fetch_add_explicit(args->next_vertex, CHUNK_SIZE, memory_order_relaxed);
+      int start = atomic_fetch_add_explicit(args->next_vertex, chunk, memory_order_relaxed);
       if (start >= n)
         break;
-      int end = start + CHUNK_SIZE;
-      if (end > n) end = n;
+      int end = start + chunk;
+      if (end > n)
+        end = n;
 
       for (int32_t u = start; u < end; u++)
       {
@@ -68,16 +69,25 @@ static void *lp_worker_full_async(void *arg)
 
         if (new_label < old_label)
         {
-          atomic_store_explicit(&args->labels[u], new_label, memory_order_relaxed);
+          int current = old_label;
+          while (current > new_label &&
+                 !atomic_compare_exchange_weak_explicit(&args->labels[u], &current, new_label,
+                                                        memory_order_relaxed, memory_order_relaxed))
+          {
+          }
+
           local_changed = 1;
 
-          // Optional: push the new label to neighbors (helps convergence)
+          // Propagate the lower label to neighbors to speed convergence
           for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
           {
             int32_t v = col_idx[j];
-            int32_t cur_v_label = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
-            if (new_label < cur_v_label)
-              atomic_store_explicit(&args->labels[v], new_label, memory_order_relaxed);
+            int neighbor = atomic_load_explicit(&args->labels[v], memory_order_relaxed);
+            while (neighbor > new_label &&
+                   !atomic_compare_exchange_weak_explicit(&args->labels[v], &neighbor, new_label,
+                                                          memory_order_relaxed, memory_order_relaxed))
+            {
+            }
           }
         }
       }
@@ -115,9 +125,11 @@ static void *lp_worker_full_async(void *arg)
 
 void compute_connected_components_pthreads(const CSRGraph *restrict G,
                                            int32_t *restrict labels,
-                                           int num_threads)
+                                           int num_threads,
+                                           int chunk_size)
 {
   const int32_t n = G->n;
+  const int effective_chunk = (chunk_size > 0) ? chunk_size : DEFAULT_CHUNK_SIZE;
 
   atomic_int *atomic_labels;
   if (posix_memalign((void **)&atomic_labels, 64, (size_t)n * sizeof(atomic_int)) != 0)
@@ -152,6 +164,7 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
     args[t].thread_id = t;
     args[t].num_threads = num_threads;
     args[t].barrier = &barrier;
+    args[t].chunk_size = effective_chunk;
     pthread_create(&threads[t], NULL, lp_worker_full_async, &args[t]);
   }
 
