@@ -5,7 +5,7 @@ CC          := gcc
 CFLAGS      := -O3 -std=c11 -Wall -Wextra -Wpedantic -fopenmp
 INCLUDE     := -Iinclude
 
-CILK_CC     := /opt/opencilk/bin/clang
+CILK_CC     ?= /opt/opencilk/bin/clang
 CILK_FLAGS  := -fopencilk -O3 -std=c11 -Wall -Wextra -Wpedantic $(INCLUDE) 
 
 LDFLAGS     := -lmatio -lz -lpthread

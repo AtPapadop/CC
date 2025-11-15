@@ -2,12 +2,22 @@
 
 This repository provides multiple connected-components executables spanning sequential, OpenMP, Pthreads, and OpenCilk implementations plus helper scripts for verification and visualization.
 
+## Requirements
+- C compiler with C11 support (e.g. `gcc`, `clang`)
+- Compiler toolchain with OpenCilk support. Set CILK_CC accordingly in the `Makefile` or your environment as fitting, for example:
+  ```bash
+  export CILK_CC=/usr/local/opencilk/bin/clang
+  ```
+- Make utility
+
 ## Building
 
 ```bash
-make            # build every binary
-make <target>   # build a specific binary, e.g. make omp
+make
+make <target>
 ```
+
+Available targets include `cc`, `cc_omp`, `cc_pthreads`, `cc_cilk`, and `cc_pthreads_sweep`.
 
 Artifacts are written to `bin/` and depend on the common graph/CC utilities under `src/`.
 
@@ -84,3 +94,11 @@ python3 verify/plot_results.py results/com-LiveJournal/
 ```
 
 Both plotting scripts default to sensible styling (Seaborn colorblind palette) and will emit the PNG path on success.
+
+**Note:** Most Python scripts depend on `matplotlib`, `numpy`, and `scipy`. A quick way to set them up is:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install matplotlib numpy scipy
+```
