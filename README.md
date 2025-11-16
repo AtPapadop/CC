@@ -77,7 +77,7 @@ All helper scripts live in `verify/` and can be invoked directly (ensure Python 
 | `verify/test.sh` | Bash harness that runs bfs, OpenMP, OpenCilk, and Pthreads binaries over a range of threads/workers, capturing results in a chosen folder. |
 | `verify/cc_verify.py` | Loads a Matrix Market graph with SciPy/NetworkX, computes connected components in Python, prints the component count, and emits `python_labels.txt` for cross-checking. |
 | `verify/plot_results.py` | Aggregates the traditional `results_*.csv` files (sequential/OpenMP/Cilk/etc.) and produces 2D runtime vs. threads plots. |
-| `verify/plot_surface.py` | Reads the `results_pthread_surface_<matrix>.csv` sweep output and renders a 3D surface plot (threads × chunk size → average runtime). |
+| `verify/plot_surface.py` | Reads the `results_pthread_surface_<matrix>.csv` sweep output and renders a 3D surface plot (threads × chunk size → average runtime) as well as a 2D projection plot onto the chunk-size axis. |
 | `verify/cc_benchmark.m` | MATLAB benchmarking helper mirroring the C pipeline for comparison to MATLAB's built-in `conncomp` function. |
 
 Example surface plot command:
@@ -100,5 +100,5 @@ Both plotting scripts default to sensible styling (Seaborn colorblind palette) a
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install matplotlib numpy scipy
+pip install matplotlib numpy scipy networkx
 ```

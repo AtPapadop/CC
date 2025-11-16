@@ -15,6 +15,7 @@
 #include <getopt.h>
 #include <limits.h>
 #include <omp.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +28,6 @@
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
-
 
 static void print_usage(const char *prog)
 {
@@ -158,8 +158,8 @@ int main(int argc, char **argv)
     if (load_csr_from_file(matrix_path, 1, 1, &G) != 0)
     {
         fprintf(stderr, "Failed to load graph from %s\n", matrix_path);
-    opt_int_list_free(&thread_counts);
-    opt_int_list_free(&chunk_sizes);
+        opt_int_list_free(&thread_counts);
+        opt_int_list_free(&chunk_sizes);
         return EXIT_FAILURE;
     }
 
@@ -168,8 +168,8 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "Label allocation failed (n=%d).\n", G.n);
         free_csr(&G);
-    opt_int_list_free(&thread_counts);
-    opt_int_list_free(&chunk_sizes);
+        opt_int_list_free(&thread_counts);
+        opt_int_list_free(&chunk_sizes);
         return EXIT_FAILURE;
     }
 
@@ -180,31 +180,51 @@ int main(int argc, char **argv)
         fprintf(stderr, "Failed to build output path: %s\n", strerror(errno));
         free(labels);
         free_csr(&G);
-    opt_int_list_free(&thread_counts);
-    opt_int_list_free(&chunk_sizes);
+        opt_int_list_free(&thread_counts);
+        opt_int_list_free(&chunk_sizes);
         return EXIT_FAILURE;
     }
 
-    FILE *csv = fopen(results_path, "w");
+    bool append = false;
+    FILE *existing = fopen(results_path, "r");
+    if (existing)
+    {
+        append = true;
+        fclose(existing);
+    }
+    else if (errno != ENOENT)
+    {
+        fprintf(stderr, "Failed to inspect %s: %s\n", results_path, strerror(errno));
+        free(labels);
+        free_csr(&G);
+        opt_int_list_free(&thread_counts);
+        opt_int_list_free(&chunk_sizes);
+        return EXIT_FAILURE;
+    }
+
+    FILE *csv = fopen(results_path, append ? "a" : "w");
     if (!csv)
     {
         fprintf(stderr, "Failed to open %s for writing: %s\n", results_path, strerror(errno));
         free(labels);
         free_csr(&G);
-    opt_int_list_free(&thread_counts);
-    opt_int_list_free(&chunk_sizes);
+        opt_int_list_free(&thread_counts);
+        opt_int_list_free(&chunk_sizes);
         return EXIT_FAILURE;
     }
 
-    if (fprintf(csv, "threads,chunk_size,average_seconds\n") < 0)
+    if (!append)
     {
-        fprintf(stderr, "Failed to write CSV header to %s.\n", results_path);
-        fclose(csv);
-        free(labels);
-        free_csr(&G);
-    opt_int_list_free(&thread_counts);
-    opt_int_list_free(&chunk_sizes);
-        return EXIT_FAILURE;
+        if (fprintf(csv, "threads,chunk_size,average_seconds\n") < 0)
+        {
+            fprintf(stderr, "Failed to write CSV header to %s.\n", results_path);
+            fclose(csv);
+            free(labels);
+            free_csr(&G);
+            opt_int_list_free(&thread_counts);
+            opt_int_list_free(&chunk_sizes);
+            return EXIT_FAILURE;
+        }
     }
 
     int32_t reference_components = -1;
