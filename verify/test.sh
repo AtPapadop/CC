@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# This script runs the connected components tests and verifies their correctness.
-# Only command line argument is the input matrix in .mtx or .mat format and the total number of runs for averaging.
+# This script runs the connected components algorithm using all avaialble methods, to then be used to generate a performance over threads plot
+# Usage:
+# ./test.sh <input_matrix.mtx/mat> <number_of_runs> <chunk_size> <output_folder>
 
 if [ "$#" -ne 4 ]; then
     echo "Usage: $0 <input_matrix.mtx/mat> <number_of_runs> <chunk_size> <output_folder>"
