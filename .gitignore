@@ -3,6 +3,7 @@ build
 *.d
 data
 bin
+test
 .venv
 .vscode
 *.txt

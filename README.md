@@ -38,6 +38,7 @@ Artifacts are written to `bin/` and depend on the common graph/CC utilities unde
 	```bash
 	bin/cc_omp --threads 1:16:2 --runs 3 --chunk-size 2048 data/com-LiveJournal.mtx
 	```
+- **Chunking tip**: Passing `--chunk-size 1` disables dynamic chunking and reverts to a static OpenMP schedule (one block per thread).
 
 ### `bin/cc_pthreads`
 - **What**: Pthreads implementation for a *single* thread count (range syntax allowed but must resolve to one value). Great for apples-to-apples comparisons with OpenMP.
@@ -45,6 +46,7 @@ Artifacts are written to `bin/` and depend on the common graph/CC utilities unde
 	```bash
 	bin/cc_pthreads --threads 8 --runs 5 --chunk-size 4096 data/com-LiveJournal.mtx
 	```
+- **Chunking tip**: `--chunk-size 1` disables the dynamic work queue, letting each thread process a contiguous static block.
 
 ### `bin/cc_cilk`
 - **What**: OpenCilk version driven by `CILK_NWORKERS`. Supports `--runs`, `--chunk-size`, and `--output`.
@@ -52,6 +54,7 @@ Artifacts are written to `bin/` and depend on the common graph/CC utilities unde
 	```bash
 	CILK_NWORKERS=12 bin/cc_cilk --runs 3 --chunk-size 2048 data/com-LiveJournal.mtx
 	```
+- **Chunking tip**: As with the other kernels, `--chunk-size 1` means "no chunking" for Cilk as well, matching the runtime’s default static distribution.
 
 ### `bin/cc_pthreads_sweep`
 - **What**: Parameter sweep that records `(threads, chunk_size, average_seconds)` for Pthreads so you can build 3D performance surfaces.
