@@ -221,3 +221,4 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
   free(threads);
   free(args);
 }
+

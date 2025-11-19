@@ -1,7 +1,7 @@
 /* CC Test (Pthreads)
  *
- * Loads a Matrix Market (.mtx/.txt) or MATLAB (.mat) graph, runs the pthread-based
- * label propagation implementation for a single thread count, and writes both the
+ * Loads a Matrix Market (.mtx/.txt) or MATLAB (.mat) graph, sweeps the pthread-based
+ * label propagation implementation across one or more thread counts, and writes both the
  * component labels and timing results. Thread counts accept either a single value
  * (default 1) or the range/list syntax shared with the sweep tool.
  *
@@ -28,7 +28,7 @@ static void print_usage(const char *prog)
     fprintf(stderr,
             "Usage: %s [OPTIONS] <matrix-file-path>\n\n"
             "Options:\n"
-            "  -t, --threads SPEC     Thread count (default 1; comma/range syntax supported)\n"
+            "  -t, --threads SPEC     Thread counts (default 1; comma/range syntax supported)\n"
             "  -r, --runs N           Number of runs to average (default 1)\n"
             "  -o, --output DIR       Output directory (default 'results')\n"
             "  -c, --chunk-size N     Chunk size for dynamic scheduling (default 4096)\n"
@@ -38,7 +38,6 @@ static void print_usage(const char *prog)
 
 int main(int argc, char **argv)
 {
-    int num_threads = 1;
     int runs = 1;
     int chunk_size = 4096;
     const char *path = NULL;
@@ -114,23 +113,22 @@ int main(int argc, char **argv)
 
     OptIntList thread_counts;
     opt_int_list_init(&thread_counts);
-    if (opt_parse_range_list(thread_spec, &thread_counts, "thread count") != 0)
+    if (opt_parse_range_list(thread_spec, &thread_counts, "thread counts") != 0)
     {
         opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
-    if (thread_counts.size != 1)
+    if (thread_counts.size == 0)
     {
-        fprintf(stderr, "Please specify exactly one thread count for this binary (use cc_pthreads_sweep for sweeps).\n");
+        fprintf(stderr, "Thread specification must yield at least one value.\n");
         opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
-    num_threads = thread_counts.values[0];
-    opt_int_list_free(&thread_counts);
 
     if (results_writer_ensure_directory(output_dir) != 0)
     {
         fprintf(stderr, "Failed to create output directory '%s': %s\n", output_dir, strerror(errno));
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
@@ -138,6 +136,7 @@ int main(int argc, char **argv)
     if (results_writer_join_path(labels_path, sizeof(labels_path), output_dir, "pthread_labels.txt") != 0)
     {
         fprintf(stderr, "Output path too long for labels file: %s\n", strerror(errno));
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
@@ -147,6 +146,7 @@ int main(int argc, char **argv)
     if (load_csr_from_file(path, 1, 1, &G) != 0)
     {
         fprintf(stderr, "Failed to load graph from %s\n", path);
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
@@ -155,6 +155,7 @@ int main(int argc, char **argv)
     {
         fprintf(stderr, "Memory allocation failed\n");
         free_csr(&G);
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
@@ -164,35 +165,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "Memory allocation failed\n");
         free(labels);
         free_csr(&G);
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
-    printf("Computing connected components with %d thread%s, chunk size %d (%d run%s)...\n",
-        num_threads,
-        num_threads == 1 ? "" : "s",
-        chunk_size,
-        runs,
-        runs == 1 ? "" : "s");
-
-    double total_time = 0.0;
-    for (int run = 0; run < runs; run++)
-    {
-        double start = omp_get_wtime();
-    compute_connected_components_pthreads(&G, labels, num_threads, chunk_size);
-        double elapsed = omp_get_wtime() - start;
-        total_time += elapsed;
-        printf("Run %d time: %.6f seconds\n", run + 1, elapsed);
-        run_times[run] = elapsed;
-    }
-
-    double average = total_time / runs;
-    printf("Average time over %d run%s: %.6f seconds.\n",
-        runs,
-        runs == 1 ? "" : "s",
-        average);
-
-    char column_name[64];
-    snprintf(column_name, sizeof(column_name), "%d Threads", num_threads);
+    printf("Sweeping %zu thread option%s (%d run%s each).\n",
+           thread_counts.size,
+           thread_counts.size == 1 ? "" : "s",
+           runs,
+           runs == 1 ? "" : "s");
 
     int results_path_ready = 0;
     char results_path[PATH_MAX];
@@ -204,13 +185,47 @@ int main(int argc, char **argv)
     else
     {
         results_path_ready = 1;
-        results_writer_status csv_status = append_times_column(results_path, column_name, run_times, (size_t)runs);
-        if (csv_status != RESULTS_WRITER_OK)
-            fprintf(stderr, "Warning: Failed to update %s (error %d)\n", results_path, (int)csv_status);
+    }
+
+    for (size_t idx = 0; idx < thread_counts.size; idx++)
+    {
+        int num_threads = thread_counts.values[idx];
+        printf("Computing connected components with %d thread%s, chunk size %d (%d run%s)...\n",
+               num_threads,
+               num_threads == 1 ? "" : "s",
+               chunk_size,
+               runs,
+               runs == 1 ? "" : "s");
+
+        double total_time = 0.0;
+        for (int run = 0; run < runs; run++)
+        {
+            double start = omp_get_wtime();
+            compute_connected_components_pthreads(&G, labels, num_threads, chunk_size);
+            double elapsed = omp_get_wtime() - start;
+            total_time += elapsed;
+            printf("  Run %d: %.6f seconds\n", run + 1, elapsed);
+            run_times[run] = elapsed;
+        }
+
+        double average = total_time / runs;
+        printf("Average for %d thread%s: %.6f seconds\n",
+               num_threads,
+               num_threads == 1 ? "" : "s",
+               average);
+
+        if (results_path_ready)
+        {
+            char column_name[64];
+            snprintf(column_name, sizeof(column_name), num_threads == 1 ? "1 Thread" : "%d Threads", num_threads);
+            results_writer_status csv_status = append_times_column(results_path, column_name, run_times, (size_t)runs);
+            if (csv_status != RESULTS_WRITER_OK)
+                fprintf(stderr, "Warning: Failed to update %s (error %d)\n", results_path, (int)csv_status);
+        }
     }
 
     int32_t num_components = count_unique_labels(labels, G.n);
-    printf("Number of connected components: %d\n", num_components);
+    printf("Number of connected components (last run): %d\n", num_components);
 
     FILE *fout = fopen(labels_path, "w");
     if (!fout)
@@ -219,6 +234,7 @@ int main(int argc, char **argv)
         free(labels);
         free_csr(&G);
         free(run_times);
+        opt_int_list_free(&thread_counts);
         return EXIT_FAILURE;
     }
 
@@ -228,10 +244,11 @@ int main(int argc, char **argv)
     fclose(fout);
     printf("Labels written to %s\n", labels_path);
     if (results_path_ready)
-        printf("Time results written to %s\n", results_path);
+        printf("Timing results written to %s\n", results_path);
 
     free(run_times);
     free(labels);
     free_csr(&G);
+    opt_int_list_free(&thread_counts);
     return EXIT_SUCCESS;
 }

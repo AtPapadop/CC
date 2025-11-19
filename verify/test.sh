@@ -20,16 +20,12 @@ echo "Starting connected components tests verification..."
 echo "Running tests on input file: $INPUT_MATRIX"
 echo "Number of runs for averaging: $RUNS"
 echo "Running bfs test..."
-./bin/cc $INPUT_MATRIX --algorithm bfs --runs $RUNS -o $OUTPUT_FOLDER -c $CHUNK_SIZE
+./bin/cc $INPUT_MATRIX --algorithm bfs --runs $RUNS -o $OUTPUT_FOLDER
 echo ""
 
 echo "Starting OpenMP tests with varying thread counts..."
-for t in 1 2 4 6 8 10 12 14 16
-do
-    echo "Running openmp test with $t thread(s)..."
-    ./bin/cc $INPUT_MATRIX --threads $t --runs $RUNS -o $OUTPUT_FOLDER -c $CHUNK_SIZE
-    echo ""
-done
+./bin/cc_omp $INPUT_MATRIX --runs $RUNS -o $OUTPUT_FOLDER -c $CHUNK_SIZE --threads 1,2:16:2
+echo ""
 
 echo "Starting Cilk tests with varying worker counts..."
 for t in 1 2 4 6 8 10 12 14 16
@@ -40,12 +36,8 @@ do
 done
 
 echo "Starting Pthreads tests with varying thread counts..."
-for t in 1 2 4 6 8 10 12 14 16
-do
-    echo "Running pthreads test with $t thread(s)..."
-    ./bin/cc_pthreads $INPUT_MATRIX --threads $t --runs $RUNS -o $OUTPUT_FOLDER -c $CHUNK_SIZE
-    echo ""
-done
+./bin/cc_pthreads $INPUT_MATRIX --runs $RUNS -o $OUTPUT_FOLDER -c $CHUNK_SIZE --threads 1,2:16:2
+echo ""
 
 echo "Connected components tests verification completed."
 echo "Results are stored in the folder: $OUTPUT_FOLDER"

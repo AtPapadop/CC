@@ -35,6 +35,11 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
                                            int num_threads,
                                            int chunk_size);
 
+void compute_connected_components_pthreads_afforest(const CSRGraph *restrict G,
+                                                    int32_t *restrict labels,
+                                                    int num_threads,
+                                                    int chunk_size);
+                                                    
 // Count the number of unique labels in the labels array
 // Using label propagation, we know that labels are in the range [0, n-1]
 int32_t count_unique_labels(const int32_t *restrict labels, int32_t n);

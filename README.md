@@ -23,6 +23,8 @@ Artifacts are written to `bin/` and depend on the common graph/CC utilities unde
 
 ## Executables
 
+All executables can be invoked with `--help` to see usage details.
+
 ### `bin/cc`
 - **What**: Sequential label propagation (`--algorithm lp`) or BFS (`--algorithm bfs`).
 - **Why**: Acts as the correctness baseline and produces `c_labels.txt`/`bfs_labels.txt` plus CSV timing columns (`results_c_*` / `results_bfs_*`).
@@ -41,10 +43,10 @@ Artifacts are written to `bin/` and depend on the common graph/CC utilities unde
 - **Chunking tip**: Passing `--chunk-size 1` disables dynamic chunking and reverts to a static OpenMP schedule (one block per thread).
 
 ### `bin/cc_pthreads`
-- **What**: Pthreads implementation for a *single* thread count (range syntax allowed but must resolve to one value). Great for apples-to-apples comparisons with OpenMP.
+- **What**: Pthreads implementation for multiple thread counts. Great for apples-to-apples comparisons with OpenMP.
 - **Usage**:
 	```bash
-	bin/cc_pthreads --threads 8 --runs 5 --chunk-size 4096 data/com-LiveJournal.mtx
+	bin/cc_pthreads --threads 8,9:13 --runs 5 --chunk-size 4096 data/com-LiveJournal.mtx
 	```
 - **Chunking tip**: `--chunk-size 1` disables the dynamic work queue, letting each thread process a contiguous static block.
 
