@@ -9,6 +9,10 @@ This repository provides multiple connected-components executables spanning sequ
   export CILK_CC=/usr/local/opencilk/bin/clang
   ```
 - Make utility
+- libmatio (for .mat file support). On Ubuntu, install via:
+  ```bash
+  sudo apt-get install libmatio-dev
+  ```
 
 ## Building
 

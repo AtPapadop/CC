@@ -54,7 +54,7 @@ $(OMP_TARGET): $(OMP_OBJ_FULL) | $(BINDIR)
 	@echo "Built $@"
 
 # --- cc_pthreads (POSIX Threads) ---
-PTHREADS_SRC_FULL := $(COMMON_SRC) src/cc_pthreads.c src/cc_pthreads_afforest.c
+PTHREADS_SRC_FULL := $(COMMON_SRC) src/cc_pthreads.c
 PTHREADS_SHARED_OBJ := $(addprefix $(OBJDIR)/, $(notdir $(PTHREADS_SRC_FULL:.c=.o)))
 PTHREADS_OBJ_FULL := $(PTHREADS_SHARED_OBJ) $(PTHREADS_OBJ)
 PTHREADS_SWEEP_OBJ_FULL := $(PTHREADS_SHARED_OBJ) $(PTHREADS_SWEEP_OBJ)

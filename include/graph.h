@@ -29,7 +29,6 @@ int load_csr_from_mat(const char *path, CSRGraph *out);
 // Returns 0 on success.
 int load_csr_from_file(const char *path, int symmetrize, int drop_self_loops, CSRGraph *out);
 
-
 // Free memory allocated for CSR graph.
 void free_csr(CSRGraph *g);
 

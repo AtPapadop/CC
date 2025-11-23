@@ -13,29 +13,29 @@
 // Thread arguments structure for pthreads
 typedef struct
 {
-  const CSRGraph *G;
-  atomic_int *labels;
-  atomic_int *changed;
-  atomic_int *next_vertex; // dynamic work index for chunk distribution
-  int32_t n;
-  int thread_id;
-  int num_threads;
-  pthread_barrier_t *barrier;
-  int chunk_size;
-  int chunking_enabled;
-  int32_t block_start;
-  int32_t block_end;
+  const CSRGraph *G;          // Graph
+  atomic_int *labels;         // Atomic labels array
+  atomic_int *changed;        // Atomic flag to indicate if any thread changed labels
+  atomic_int *next_vertex;    // dynamic work index for chunk distribution
+  int32_t n;                  // Number of vertices
+  int thread_id;              // Thread ID
+  int num_threads;            // Total number of threads
+  pthread_barrier_t *barrier; // Barrier for synchronization
+  int chunk_size;             // Chunk size for work distribution
+  int chunking_enabled;       // Flag to enable/disable chunking
+  int32_t block_start;        // Start index of the block for this thread
+  int32_t block_end;          // End index of the block for this thread
 } ThreadArgs;
 
 // Returns 1 when vertex u (or its neighbors) adopts a lower label
-static inline int relax_vertex_label(int32_t u,
-                                     const int64_t *restrict row_ptr,
-                                     const int32_t *restrict col_idx,
-                                     atomic_int *restrict labels)
+// Uses inline to avoid function call overhead in the inner loop
+static inline int relax_vertex_label(int32_t u, const int64_t *restrict row_ptr,
+                                     const int32_t *restrict col_idx, atomic_int *restrict labels)
 {
   int32_t old_label = atomic_load_explicit(&labels[u], memory_order_relaxed);
   int32_t new_label = old_label;
 
+  // Check neighbors for smaller labels
   for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
   {
     int32_t v = col_idx[j];
@@ -44,6 +44,7 @@ static inline int relax_vertex_label(int32_t u,
       new_label = neighbor_label;
   }
 
+  // Update label if a smaller one was found
   if (new_label < old_label)
   {
     int32_t current = old_label;
@@ -53,6 +54,7 @@ static inline int relax_vertex_label(int32_t u,
     {
     }
 
+    // Propagate the new label to neighbors to help convergence
     for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
     {
       int32_t v = col_idx[j];
@@ -70,7 +72,7 @@ static inline int relax_vertex_label(int32_t u,
   return 0;
 }
 
-// Worker thread: fully asynchronous label propagation
+// Worker thread: Semi asynchronous label propagation
 static void *lp_worker_full_async(void *arg)
 {
   ThreadArgs *args = (ThreadArgs *)arg;
@@ -92,6 +94,7 @@ static void *lp_worker_full_async(void *arg)
       atomic_store_explicit(args->next_vertex, 0, memory_order_relaxed);
     pthread_barrier_wait(args->barrier);
 
+    // Check if chunking is enabled and choose between dynamic or static work distribution
     if (chunking_enabled)
     {
       // Dynamic work distribution via atomic index in chunk_size blocks
@@ -110,6 +113,7 @@ static void *lp_worker_full_async(void *arg)
     }
     else
     {
+      // Static block assigned to this thread
       for (int32_t u = block_start; u < block_end; u++)
         local_changed |= relax_vertex_label(u, row_ptr, col_idx, args->labels);
     }
@@ -144,16 +148,15 @@ static void *lp_worker_full_async(void *arg)
   return NULL;
 }
 
-void compute_connected_components_pthreads(const CSRGraph *restrict G,
-                                           int32_t *restrict labels,
-                                           int num_threads,
-                                           int chunk_size)
+void compute_connected_components_pthreads(const CSRGraph *restrict G, int32_t *restrict labels,
+                                           int num_threads, int chunk_size)
 {
   const int32_t n = G->n;
   const int chunking_enabled = (chunk_size != 1);
   const int effective_chunk = (chunk_size > 0) ? chunk_size : DEFAULT_CHUNK_SIZE;
   const int32_t static_block = (!chunking_enabled && num_threads > 0)
-                                ? (int32_t)(((int64_t)n + num_threads - 1) / num_threads) : 0;
+                                   ? (int32_t)(((int64_t)n + num_threads - 1) / num_threads)
+                                   : 0;
 
   atomic_int *atomic_labels;
   if (posix_memalign((void **)&atomic_labels, 64, (size_t)n * sizeof(atomic_int)) != 0)
@@ -178,6 +181,7 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
   pthread_t *threads = malloc(num_threads * sizeof(pthread_t));
   ThreadArgs *args = malloc(num_threads * sizeof(ThreadArgs));
 
+  // Create worker threads
   for (int t = 0; t < num_threads; t++)
   {
     args[t].G = G;
@@ -209,6 +213,7 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
     pthread_create(&threads[t], NULL, lp_worker_full_async, &args[t]);
   }
 
+  // Wait for all threads to finish
   for (int t = 0; t < num_threads; t++)
     pthread_join(threads[t], NULL);
 
@@ -221,4 +226,3 @@ void compute_connected_components_pthreads(const CSRGraph *restrict G,
   free(threads);
   free(args);
 }
-

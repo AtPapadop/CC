@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 
+// Status codes for results writer functions
 typedef enum
 {
     RESULTS_WRITER_OK = 0,
@@ -32,4 +33,4 @@ int results_writer_matrix_stem(const char *matrix_path, char *dest, size_t dest_
 int results_writer_build_results_path(char *dest, size_t dest_size, const char *output_dir,
                                       const char *prefix, const char *matrix_path);
 
-#endif /* RESULTS_WRITER_H */
+#endif

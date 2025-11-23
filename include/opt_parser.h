@@ -3,10 +3,6 @@
 
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 // Dynamic integer list used by CLI parsing helpers.
 typedef struct
 {
@@ -33,8 +29,4 @@ int opt_parse_positive_int(const char *text, int *out);
 // Parse comma/range specifications (e.g., "1,4,8" or "1:16:2") into a list. Returns 0 on success.
 int opt_parse_range_list(const char *spec, OptIntList *list, const char *label);
 
-#ifdef __cplusplus
-}
 #endif
-
-#endif /* OPT_PARSER_H */

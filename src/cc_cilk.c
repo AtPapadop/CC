@@ -16,7 +16,7 @@ void compute_connected_components_cilk(const CSRGraph *restrict G,
   const int32_t *restrict col_idx = G->col_idx;
   const int effective_chunk = (chunk_size > 0) ? chunk_size : DEFAULT_CHUNK_SIZE;
 
-  // --- Initialize labels ---
+  //Initialize labels
   for (int32_t i = 0; i < n; i++)
     labels[i] = i;
 
@@ -34,16 +34,19 @@ void compute_connected_components_cilk(const CSRGraph *restrict G,
   {
     _Atomic int any_changed = 0;
 
+    // Main label propagation loop
     cilk_for(int32_t base = 0; base < n; base += effective_chunk)
     {
       int local_changed = 0;
       int32_t end = (base + effective_chunk < n) ? base + effective_chunk : n;
 
+      // Process vertices in the chunk
       for (int32_t u = base; u < end; u++)
       {
         int32_t old_label = atomic_load_explicit(&atomic_labels[u], memory_order_relaxed);
         int32_t new_label = old_label;
-
+        
+        // Check neighbors for smaller labels
         for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
         {
           int32_t v = col_idx[j];
@@ -51,7 +54,8 @@ void compute_connected_components_cilk(const CSRGraph *restrict G,
           if (neighbor_label < new_label)
             new_label = neighbor_label;
         }
-
+        
+        // Update label if a smaller one was found
         if (new_label < old_label)
         {
           int32_t current = old_label;
@@ -62,7 +66,8 @@ void compute_connected_components_cilk(const CSRGraph *restrict G,
           }
 
           local_changed = 1;
-
+          
+          // Propagate the new label to neighbors to help convergence
           for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
           {
             int32_t v = col_idx[j];

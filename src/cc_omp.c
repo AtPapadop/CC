@@ -32,6 +32,7 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
   for (int32_t i = 0; i < n; i++)
     atomic_store_explicit(&atomic_labels[i], labels[i], memory_order_relaxed);
 
+  // Set OpenMP scheduling during runtime according to chunking preference
   omp_set_schedule(chunking_enabled ? omp_sched_dynamic : omp_sched_static,
                    chunking_enabled ? effective_chunk : 0);
 
@@ -40,12 +41,14 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
     int changed = 0;
 
 // Dynamic scheduling unless the caller requested no chunking (meaning chunk_size == 1)
+// Main propagation loop
 #pragma omp parallel for schedule(runtime) reduction(|| : changed)
     for (int32_t u = 0; u < n; u++)
     {
       int32_t old_label = atomic_load_explicit(&atomic_labels[u], memory_order_relaxed);
       int32_t new_label = old_label;
 
+      // Check neighbors for smaller labels
       for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
       {
         int32_t v = col_idx[j];
@@ -54,6 +57,7 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
           new_label = neighbor_label;
       }
 
+      // Update label if a smaller one was found
       if (new_label < old_label)
       {
         int32_t current = old_label;
@@ -64,7 +68,8 @@ void compute_connected_components_omp(const CSRGraph *restrict G,
         }
 
         changed = 1;
-
+        
+        // Propagate the new label to neighbors to help convergence
         for (int64_t j = row_ptr[u]; j < row_ptr[u + 1]; j++)
         {
           int32_t v = col_idx[j];

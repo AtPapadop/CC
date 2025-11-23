@@ -16,9 +16,11 @@ mkdir -p $OUTPUT_FOLDER
 INPUT_MATRIX=$1
 RUNS=$2
 CHUNK_SIZE=$3
+
 echo "Starting connected components tests verification..."
 echo "Running tests on input file: $INPUT_MATRIX"
 echo "Number of runs for averaging: $RUNS"
+
 echo "Running bfs test..."
 ./bin/cc $INPUT_MATRIX --algorithm bfs --runs $RUNS -o $OUTPUT_FOLDER
 echo ""
